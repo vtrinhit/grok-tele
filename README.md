@@ -125,7 +125,7 @@ Log: `data\groktele.log`. Dữ liệu job: `data\groktele.db`.
 | Tình huống | GrokTele làm gì |
 |---|---|
 | Bot báo lỗi render | Thử lại, tối đa 3 lượt rồi `failed` |
-| Quá 5 phút chưa có video (`GROKTELE_VIDEO_TIMEOUT`) | Gửi `/cancel` cho bot rồi thử lại ngay. Nếu bot vẫn gửi video muộn thì dùng luôn video đó |
+| Quá 10 phút chưa có video (`GROKTELE_VIDEO_TIMEOUT`) | Gửi `/cancel` cho bot rồi thử lại ngay. Nếu bot vẫn gửi video muộn thì dùng luôn video đó |
 | Bot bảo trì / reset mạng | Trả job về hàng đợi (không mất lượt), tài khoản nghỉ 5 phút rồi hỏi `/status` |
 | FloodWait của Telegram | Nghỉ đúng số giây Telegram yêu cầu |
 | Mất mạng | Tự kết nối lại |

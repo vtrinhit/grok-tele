@@ -74,7 +74,7 @@ class Settings:
     default_resolution: str = "720p"
     max_attempts: int = 3
     ui_timeout: float = 60.0
-    video_timeout: float = 300.0  # video thật ~1–2 phút; quá 5 phút thì /cancel và thử lại
+    video_timeout: float = 600.0  # video thật ~1–4 phút; quá 10 phút thì /cancel và thử lại
     # Sau /cancel, không thấy dấu hiệu render (video, tin % được cập nhật) trong ngần này giây → coi như đã huỷ.
     # Nếu /cancel không dừng được render thì video muộn có thể lọt sang job sau → khi đó tăng lên 60 (.env).
     cancel_quiet: float = 20.0
