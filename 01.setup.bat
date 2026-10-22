@@ -30,5 +30,5 @@ if not exist ".env" (
   notepad ".env"
 )
 echo.
-echo Cai dat xong. Tiep theo: login.bat de them tai khoan Telegram, roi start.bat.
+echo Cai dat xong. Tiep theo: 02.login.bat de them tai khoan Telegram, roi 03.start.bat.
 pause

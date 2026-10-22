@@ -1,12 +1,12 @@
 @echo off
-rem Chay GrokTele (API + worker). Tu khoi dong lai neu bi tat. Dung bang stop.bat
-rem start.bat hidden = che do chay an (khong pause khi loi)
+rem Chay GrokTele (API + worker). Tu khoi dong lai neu bi tat. Dung bang 06.stop.bat
+rem 03.start.bat hidden = che do chay an (khong pause khi loi)
 setlocal
 cd /d "%~dp0"
 chcp 65001 >nul
 title GrokTele
 if not exist ".venv\Scripts\python.exe" (
-  echo Chua cai dat. Chay setup.bat truoc.
+  echo Chua cai dat. Chay 01.setup.bat truoc.
   if /i not "%~1"=="hidden" pause
   exit /b 1
 )
@@ -26,6 +26,6 @@ if %CODE% GEQ 2 (
   if /i not "%~1"=="hidden" pause
   exit /b %CODE%
 )
-echo GrokTele dung lai, khoi dong lai sau 5 giay... (chay stop.bat de dung han)
+echo GrokTele dung lai, khoi dong lai sau 5 giay... (chay 06.stop.bat de dung han)
 "%SystemRoot%\System32\timeout.exe" /t 5 /nobreak >nul
 goto loop

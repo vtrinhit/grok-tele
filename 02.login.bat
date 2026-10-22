@@ -12,5 +12,5 @@ if "%PROXY%"=="" (
 ) else (
   ".venv\Scripts\python.exe" -m groktele login %NAME% --proxy "%PROXY%"
 )
-echo Neu server dang chay: chay stop.bat roi start.bat de nap tai khoan moi.
+echo Neu server dang chay: chay 06.stop.bat roi 03.start.bat de nap tai khoan moi.
 pause

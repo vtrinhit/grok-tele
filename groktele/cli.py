@@ -101,7 +101,7 @@ async def _try(settings: Settings, name: str, image: str, prompt: str, aspect: s
     from groktele.app import _port_free
 
     if not _port_free(settings.host, settings.port):
-        print(f"Server GrokTele đang chạy (cổng {settings.port}). Chạy stop.bat trước: "
+        print(f"Server GrokTele đang chạy (cổng {settings.port}). Chạy 06.stop.bat trước: "
               "1 session Telegram không được dùng ở 2 nơi cùng lúc.")
         raise SystemExit(3)
     out_path = Path(out) if out else settings.outputs_dir / f"try_{int(time.time())}.mp4"

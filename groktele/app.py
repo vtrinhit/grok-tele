@@ -103,7 +103,7 @@ def _port_free(host: str, port: int) -> bool:
 
 
 def serve(settings: Settings) -> None:
-    """Mã thoát: 2 = thiếu cấu hình, 3 = cổng đang bận. start.bat dừng hẳn (không khởi động lại) khi mã >= 2."""
+    """Mã thoát: 2 = thiếu cấu hình, 3 = cổng đang bận. 03.start.bat dừng hẳn (không khởi động lại) khi mã >= 2."""
     import uvicorn
 
     setup_logging(settings)
@@ -116,11 +116,11 @@ def serve(settings: Settings) -> None:
         log.error("Thiếu TG_API_ID / TG_API_HASH trong %s (lấy tại https://my.telegram.org)", settings.root / ".env")
         raise SystemExit(2)
     if not _port_free(settings.host, settings.port):
-        log.error("Cổng %s:%d đang bị chiếm (GrokTele đã chạy rồi? chạy stop.bat). Hoặc đổi GROKTELE_PORT trong .env",
+        log.error("Cổng %s:%d đang bị chiếm (GrokTele đã chạy rồi? chạy 06.stop.bat). Hoặc đổi GROKTELE_PORT trong .env",
                   settings.host, settings.port)
         raise SystemExit(3)
     if not settings.accounts:
-        log.warning("accounts.yaml chưa có tài khoản nào. Chạy login.bat (hoặc python -m groktele login acc1)")
+        log.warning("accounts.yaml chưa có tài khoản nào. Chạy 02.login.bat (hoặc python -m groktele login acc1)")
     pid_file = settings.data_dir / "groktele.pid"
     pid_file.write_text(str(os.getpid()), encoding="ascii")
     atexit.register(lambda: pid_file.unlink(missing_ok=True))
