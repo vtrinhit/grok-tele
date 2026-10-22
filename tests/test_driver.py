@@ -150,3 +150,20 @@ async def test_check_status() -> None:
     assert info.active is False
     info = await check_status(FakeChat(status="silent"), timeout=0.2)
     assert info.active is None
+
+
+async def test_long_prompt_sent_as_separate_message(image: Path, tmp_path: Path) -> None:
+    chat = FakeChat()
+    long_prompt = "CHARACTERS: Madeleine Roux, 68-year-old woman, short silver hair. " * 25  # ~1700 ký tự
+    assert len(long_prompt) > 1024
+    res = await run_job(chat, JobParams(image_path=str(image), prompt=long_prompt, output_path=str(tmp_path / "l.mp4")),
+                        ui_timeout=2, video_timeout=2)
+    assert chat.photos[0][1] == ""            # ảnh không kèm caption
+    assert chat.texts[-1] == long_prompt      # prompt gửi thành tin nhắn riêng
+    assert res.path.read_bytes().startswith(f"VIDEO:{long_prompt}|".encode())
+
+
+async def test_short_prompt_stays_caption(image: Path, tmp_path: Path) -> None:
+    chat = FakeChat()
+    await run_job(chat, _params(image, tmp_path), ui_timeout=2, video_timeout=2)
+    assert chat.photos[0][1] == "Tạo video hoa nở" and chat.texts == []

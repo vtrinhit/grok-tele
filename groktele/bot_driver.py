@@ -24,6 +24,8 @@ from groktele.chat import BotChat, BotMessage
 log = logging.getLogger("groktele.driver")
 
 MIN_VIDEO_BYTES = 5_000
+CAPTION_LIMIT = 1000  # Telegram: caption ảnh tối đa 1024 ký tự (UTF-16), chừa biên an toàn
+TEXT_LIMIT = 4000     # Telegram: tin nhắn tối đa 4096 ký tự
 
 
 # ------------------------------------------------------------------ errors
@@ -217,12 +219,17 @@ class _Waiter:
 
 async def _ensure_option(chat: BotChat, options_id: int, kind: str, value: str, delay: Delay) -> None:
     for attempt in range(3):
-        msg = await chat.get_message(options_id)
-        if msg is None:
-            raise RetryableError("Bảng tuỳ chọn biến mất trước khi bấm Tạo Video")
-        btn = find_button(msg, kind, value)
+        msg, btn = None, None
+        for _ in range(10):  # nút có thể được gắn trễ một chút
+            msg = await chat.get_message(options_id)
+            if msg is None:
+                raise RetryableError("Bảng tuỳ chọn biến mất trước khi bấm Tạo Video")
+            btn = find_button(msg, kind, value)
+            if btn is not None:
+                break
+            await asyncio.sleep(0.5)
         if btn is None:
-            raise RetryableError(f"Không thấy nút {kind}={value} trong bảng tuỳ chọn: {msg.buttons}")
+            raise RetryableError(f"Không thấy nút {kind}={value} trong bảng tuỳ chọn: {msg.buttons if msg else None}")
         row, col, label = btn
         if is_selected(label):
             return
@@ -252,10 +259,16 @@ async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, vide
     waiter = _Waiter(chat, baseline)
 
     stage("upload", 0.0)
-    await chat.send_photo(p.image_path, p.prompt)
+    if len(p.prompt) <= CAPTION_LIMIT:
+        await chat.send_photo(p.image_path, p.prompt)
+    else:
+        # Caption ảnh tối đa 1024 ký tự. Bot cũng nhận kiểu "gửi ảnh, rồi nhắn kịch bản" (đúng hướng dẫn của bot).
+        await chat.send_photo(p.image_path, "")
+        await delay()
+        await chat.send_text(p.prompt[:TEXT_LIMIT])
 
-    options = await waiter.wait(lambda m, c: c == "options" or find_button(m, "start") is not None,
-                                ui_timeout, "bảng tuỳ chọn")
+    # Bot gửi chữ "Đã nhận 1 bức ảnh..." trước rồi mới sửa tin để gắn nút → chờ tới khi có nút Tạo Video.
+    options = await waiter.wait(lambda m, c: find_button(m, "start") is not None, ui_timeout, "bảng tuỳ chọn")
     stage("options", 0.05)
     await _ensure_option(chat, options.id, "aspect", p.aspect, delay)
     await _ensure_option(chat, options.id, "duration", str(p.duration), delay)

@@ -258,3 +258,25 @@ async def test_restart_requeues_running_job(settings: Settings, image: Path) -> 
     async with running(settings, Factory()) as (client, _):
         job = await wait_status(client, jid, ("succeeded", "failed"))
         assert job["status"] == "succeeded" and job["attempts"] == 1
+
+
+async def test_long_prompt_via_api(settings: Settings, image: Path) -> None:
+    prompt = "CHARACTERS: Camille Moreau: 38-year-old French woman, fair skin, auburn hair. " * 24
+    async with running(settings, Factory()) as (client, _):
+        jid = (await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": prompt[:2000]})).json()["jobId"]
+        job = await wait_status(client, jid, ("succeeded", "failed"))
+        assert job["status"] == "succeeded" and job["attempts"] == 1, job
+
+
+async def test_telegram_input_error_fails_without_retry(settings: Settings, image: Path, monkeypatch) -> None:
+    from telethon.errors import MediaCaptionTooLongError
+
+    async def boom(self, path, caption):  # noqa: ANN001
+        raise MediaCaptionTooLongError(request=None)
+
+    monkeypatch.setattr(FakeChat, "send_photo", boom)
+    async with running(settings, Factory()) as (client, _):
+        jid = (await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": "p"})).json()["jobId"]
+        job = await wait_status(client, jid, ("succeeded", "failed"))
+        assert job["status"] == "failed" and job["attempts"] == 1
+        assert job["error"]["kind"] == "invalid_input"

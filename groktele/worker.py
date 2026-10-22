@@ -48,6 +48,22 @@ def _telethon_errors() -> tuple[tuple[type, ...], tuple[type, ...]]:
 
 
 DEAD_ERRORS, FLOOD_ERRORS = _telethon_errors()
+
+
+def _input_errors() -> tuple[type, ...]:
+    """Lỗi do chính ảnh / prompt: thử lại cũng vô ích → fail ngay."""
+    try:
+        from telethon import errors as e
+
+        names = ("MediaCaptionTooLongError", "MessageTooLongError", "PhotoInvalidDimensionsError",
+                 "PhotoExtInvalidError", "PhotoSaveFileInvalidError", "ImageProcessFailedError",
+                 "MediaInvalidError", "PhotoInvalidError", "MediaEmptyError", "FilePartsInvalidError")
+        return tuple(getattr(e, n) for n in names if hasattr(e, n))
+    except ImportError:  # pragma: no cover
+        return ()
+
+
+INPUT_ERRORS = _input_errors()
 NETWORK_ERRORS: tuple[type, ...] = (ConnectionError, OSError, asyncio.IncompleteReadError)
 
 
@@ -268,6 +284,9 @@ class AccountWorker:
             seconds = int(getattr(exc, "seconds", 60) or 60)
             self.db.requeue(job_id, refund_attempt=True, kind="rate_limited", message=msg)
             self._cooldown(seconds + 5, f"FloodWait {seconds}s")
+        elif INPUT_ERRORS and isinstance(exc, INPUT_ERRORS):
+            self.db.finish_failed(job_id, kind="invalid_input", message=f"Telegram từ chối ảnh/prompt: {msg}")
+            log.error("[%s] %s Telegram từ chối ảnh/prompt, không thử lại: %s", self.name, job_id, msg)
         elif isinstance(exc, (FileNotFoundError, IsADirectoryError, PermissionError)):
             self.db.finish_failed(job_id, kind="invalid_input", message=f"Không đọc/ghi được file: {msg}")
         elif isinstance(exc, NETWORK_ERRORS):

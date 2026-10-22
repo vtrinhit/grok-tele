@@ -24,6 +24,10 @@ RENDER_ERROR = "❌ Có lỗi xảy ra khi tạo video. Bạn hãy gửi lại �
 DONE = "✅ Nhiệm vụ đã hoàn thành, nếu bạn muốn tạo thêm hãy gửi nhé!"
 
 
+class CaptionTooLong(Exception):
+    """Giống telethon MediaCaptionTooLongError."""
+
+
 @dataclass
 class Scenario:
     photo: str = "options"       # options | maintenance | expired | silent
@@ -93,27 +97,43 @@ class FakeChat:
 
     async def send_photo(self, path: str, caption: str) -> int:
         assert Path(path).exists(), path
+        if len(caption) > 1024:
+            raise CaptionTooLong("The caption is too long (caused by SendMediaRequest)")
         self.photos.append((path, caption))
         self._prompt = caption
         my_id = self._id()
         sc = self.scenarios.pop(0) if self.scenarios else self.default
         self._current = sc
+        if not caption:
+            self._awaiting_prompt = True  # bot chờ tin nhắn kịch bản
+            return my_id
+        self._reply_photo(sc)
+        return my_id
 
+    def _reply_photo(self, sc: Scenario) -> None:
         async def reply() -> None:
             await asyncio.sleep(sc.step)
             if sc.photo == "options":
-                self.bot_says(self._options_text(), self._keyboard())
+                # Bot thật: gửi chữ trước, ~0.5s sau mới sửa tin để gắn nút.
+                m = self.bot_says(self._options_text())
+                await asyncio.sleep(sc.step * 3)
+                self._edit(BotMessage(id=m.id, text=m.text, buttons=self._keyboard()))
             elif sc.photo == "maintenance":
                 self.bot_says(MAINTENANCE)
             elif sc.photo == "expired":
                 self.bot_says(EXPIRED)
 
         self._later(reply)
-        return my_id
 
     async def send_text(self, text: str) -> int:
         self.texts.append(text)
         my_id = self._id()
+        if getattr(self, "_awaiting_prompt", False) and not text.startswith("/"):
+            assert len(text) <= 4096
+            self._awaiting_prompt = False
+            self._prompt = text
+            self._reply_photo(self._current or self.default)
+            return my_id
         if text == "/status" and self.status != "silent":
             async def reply() -> None:
                 await asyncio.sleep(0.005)
