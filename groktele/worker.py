@@ -288,7 +288,9 @@ class AccountWorker:
         def on_stage(stage: str, progress: float) -> None:
             self.db.set_progress(job_id, stage, progress)
 
-        state = JobState()
+        # Dấu render dở ghi vào DB trước khi bấm Tạo Video: app bị kill (06.stop.bat, đóng cửa sổ, mất điện)
+        # thì lần chạy sau vẫn biết phải chờ video về muộn của job này.
+        state = JobState(on_render_start=lambda baseline: self.db.set_orphan(self.name, job_id, baseline))
         send_cancel_cmd = False  # job bị huỷ / timeout khi bot đang render → /cancel cho đỡ mất thời gian
         self.current_job = job_id
         self.job_task = asyncio.create_task(
@@ -319,6 +321,8 @@ class AccountWorker:
             self.current_job = None
             self.job_task = None
             task = asyncio.current_task()
+            if state.render_baseline is not None and state.render_ended:
+                self.db.clear_orphan(self.name)  # bot đã trả video hoặc báo lỗi: không còn gì về muộn
             if state.orphaned and not (task is not None and task.cancelling()):
                 # Bot có thể vẫn đang render job này → không gửi job mới cho tới khi render đó kết thúc.
                 self.db.set_orphan(self.name, job_id, state.render_baseline)  # type: ignore[arg-type]

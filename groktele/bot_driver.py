@@ -172,6 +172,8 @@ class JobState:
 
     render_baseline: Optional[int] = None
     render_ended: bool = False
+    # Gọi ngay trước khi bấm "Tạo Video" để worker ghi dấu render dở vào DB (sống sót cả khi app bị kill).
+    on_render_start: Optional[Callable[[int], None]] = None
 
     @property
     def orphaned(self) -> bool:
@@ -307,6 +309,8 @@ async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, vide
     await delay()
     # Từ đây bot có thể đang render: nếu job dừng giữa chừng, video sẽ về muộn.
     state.render_baseline = baseline
+    if state.on_render_start is not None:
+        state.on_render_start(baseline)
     await chat.click(options.id, start[0], start[1])
 
     await waiter.wait(lambda m, c: c == "accepted", ui_timeout, "xác nhận 'Đã nhận yêu cầu'")

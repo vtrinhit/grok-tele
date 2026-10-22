@@ -5,6 +5,7 @@ Bot không gắn video với ảnh gốc, nên tài khoản phải chờ video v
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sqlite3
 from pathlib import Path
 
@@ -192,3 +193,46 @@ async def test_cancel_not_honoured_still_no_mismatch(settings: Settings, image: 
         job_b = await wait_status(client, b, ("succeeded", "failed"), timeout=20)
         assert job_b["status"] == "succeeded"
         assert (tmp_path / "b.mp4").read_bytes().startswith(b"VIDEO:JOB-B|")
+
+
+async def test_render_marker_written_before_any_abort(settings: Settings, image: Path, tmp_path: Path) -> None:
+    # 06.stop.bat dùng taskkill /F: không có bước dọn dẹp. Dấu render dở phải có trong DB ngay khi bot bắt đầu render.
+    settings.ui_timeout = 5
+    settings.video_timeout = 30
+    f = Factory({"acc1": [Scenario(step=0.6)]})
+    async with running(settings, f) as (client, db):
+        a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+        await _wait_stage(client, a, "generate")
+        assert db.get_account("acc1")["orphan_job"] == a
+        job = await wait_status(client, a, ("succeeded", "failed"), timeout=20)
+        assert job["status"] == "succeeded"
+        assert db.get_account("acc1")["orphan_job"] is None  # xong thì xoá dấu
+
+
+async def test_hard_kill_then_restart_uses_late_video(settings: Settings, image: Path, tmp_path: Path) -> None:
+    # Mô phỏng kill cứng: DB còn job 'running' + dấu render dở, bot vẫn đang render ở phía Telegram.
+    from groktele.bot_driver import JobParams, JobState, run_job
+
+    chat = FakeChat([Scenario(step=0.6)])
+    chat.keep_rendering = True
+    db = DB(settings.db_path)
+    job = db.create_job(image_path=str(image), prompt="JOB-A", aspect="9:16", duration=10, resolution="720p",
+                        output_path=str(tmp_path / "a.mp4"))
+    db.ensure_account("acc1")
+    db.claim_job("acc1")
+    state = JobState(on_render_start=lambda b: db.set_orphan("acc1", job["id"], b))
+    t = asyncio.create_task(run_job(chat, JobParams(str(image), "JOB-A", output_path=str(tmp_path / "x.mp4")),
+                                    ui_timeout=5, video_timeout=30, state=state))
+    while state.render_baseline is None:
+        await asyncio.sleep(0.02)
+    t.cancel()  # process chết: không requeue, không dọn dẹp gì
+    with contextlib.suppress(asyncio.CancelledError):
+        await t
+    assert db.get_job(job["id"])["status"] == "running"
+    db.close()
+
+    async with running(settings, Factory(shared=chat)) as (client, _):
+        done = await wait_status(client, job["id"], ("succeeded", "failed"), timeout=20)
+        assert done["status"] == "succeeded"
+        assert (tmp_path / "a.mp4").read_bytes().startswith(b"VIDEO:JOB-A|")
+        assert len(chat.photos) == 1  # không gửi ảnh lần 2
