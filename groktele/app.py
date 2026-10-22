@@ -78,6 +78,9 @@ def build_app(settings: Settings, *, db: Optional[DB] = None, chat_factory: Opti
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> Any:
+        import asyncio
+
+        quiet_connection_resets(asyncio.get_running_loop())
         removed = cleanup_uploads(settings)
         if removed:
             log.info("Dọn %d ảnh upload cũ", removed)
@@ -91,6 +94,48 @@ def build_app(settings: Settings, *, db: Optional[DB] = None, chat_factory: Opti
     app.state.manager = manager
     app.state.db = db
     return app
+
+
+def disable_quick_edit() -> bool:
+    """Tắt QuickEdit của cửa sổ CMD (Windows).
+
+    Khi QuickEdit bật, bấm chuột vào cửa sổ sẽ "chọn chữ" và chặn mọi lệnh ghi ra console → cả server đứng
+    (không nhận job, không chạy worker) cho tới khi nhấn Enter/Esc. Chạy ẩn hoặc không có console thì bỏ qua.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = wintypes.DWORD()
+        if not handle or not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        ENABLE_QUICK_EDIT_MODE, ENABLE_EXTENDED_FLAGS, ENABLE_INSERT_MODE = 0x0040, 0x0080, 0x0020
+        new_mode = (mode.value | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE & ~ENABLE_INSERT_MODE
+        return bool(kernel32.SetConsoleMode(handle, new_mode))
+    except Exception:
+        return False
+
+
+_NOISY_ERRORS = (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)
+
+
+def quiet_connection_resets(loop: Any) -> None:
+    """Bỏ log lỗi vô hại của asyncio trên Windows khi client đóng kết nối HTTP đột ngột (WinError 10054)."""
+    previous = loop.get_exception_handler()
+
+    def handler(lp: Any, context: dict) -> None:
+        if isinstance(context.get("exception"), _NOISY_ERRORS):
+            return
+        if previous is not None:
+            previous(lp, context)
+        else:
+            lp.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
 
 
 def _port_free(host: str, port: int) -> bool:
@@ -107,6 +152,8 @@ def serve(settings: Settings) -> None:
     import uvicorn
 
     setup_logging(settings)
+    if disable_quick_edit():
+        log.info("Đã tắt QuickEdit của cửa sổ (bấm chuột vào cửa sổ không còn làm server đứng)")
     log.info("Thư mục dữ liệu: %s", settings.root)
     if not (settings.root / ".env").exists():
         log.error("Không thấy %s. Copy .env.example thành .env rồi điền TG_API_ID, TG_API_HASH",

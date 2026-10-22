@@ -138,3 +138,27 @@ def test_default_port_is_8888() -> None:
     from groktele.config import Settings
 
     assert Settings().port == 8888
+
+
+async def test_connection_reset_noise_is_suppressed(caplog: pytest.LogCaptureFixture) -> None:
+    import asyncio
+    import logging
+
+    from groktele.app import quiet_connection_resets
+
+    loop = asyncio.get_running_loop()
+    old = loop.get_exception_handler()
+    try:
+        quiet_connection_resets(loop)
+        with caplog.at_level(logging.ERROR, logger="asyncio"):
+            loop.call_exception_handler({"message": "x", "exception": ConnectionResetError(10054, "reset")})
+            loop.call_exception_handler({"message": "real problem", "exception": ValueError("boom")})
+        assert "reset" not in caplog.text and "real problem" in caplog.text
+    finally:
+        loop.set_exception_handler(old)
+
+
+def test_disable_quick_edit_never_raises() -> None:
+    from groktele.app import disable_quick_edit
+
+    assert disable_quick_edit() in (True, False)  # pytest không có console thật → False, không lỗi
