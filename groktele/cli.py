@@ -98,8 +98,13 @@ async def _try(settings: Settings, name: str, image: str, prompt: str, aspect: s
     if not acc:
         print(f"Không có '{name}' trong accounts.yaml")
         raise SystemExit(1)
+    from groktele.app import _port_free
+
+    if not _port_free(settings.host, settings.port):
+        print(f"Server GrokTele đang chạy (cổng {settings.port}). Chạy stop.bat trước: "
+              "1 session Telegram không được dùng ở 2 nơi cùng lúc.")
+        raise SystemExit(3)
     out_path = Path(out) if out else settings.outputs_dir / f"try_{int(time.time())}.mp4"
-    print("Lưu ý: tắt server trước khi chạy lệnh này (1 session không nên chạy 2 nơi cùng lúc).")
     chat = await TelethonChat.connect(session=acc.session, api_id=settings.api_id, api_hash=settings.api_hash,
                                       bot=settings.bot, proxy=parse_proxy(acc.proxy))
     try:

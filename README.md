@@ -1,7 +1,7 @@
 # GrokTele
 
 Tạo video hàng loạt qua bot Telegram **@GrokKian_bot** (Grok Không Giới Hạn Theo Tuần), chạy nền 24/7 trên Windows.
-Mỗi tài khoản Telegram là 1 luồng (~2 phút/video → ~25 video/giờ/tài khoản).
+Mỗi tài khoản Telegram là 1 luồng (~100 giây/video → ~35 video/giờ/tài khoản).
 
 API **giống hệt MultiKit Grok**, nên ReelFB Studio dùng ngay provider `multikit` có sẵn, chỉ đổi URL.
 
@@ -19,10 +19,26 @@ API **giống hệt MultiKit Grok**, nên ReelFB Studio dùng ngay provider `mul
 
 Bắt đầu nhanh: `setup.bat` → điền `.env` → `login.bat` → `start.bat`.
 
+Source đặt ở thư mục nào cũng được (kể cả có dấu cách, tiếng Việt). Mọi dữ liệu (`.env`, `accounts.yaml`, `data\`)
+nằm ngay trong thư mục source. Cần Python 3.11+ (`python` hoặc launcher `py` đều được).
+
+## Cài lên VPS Windows
+
+1. Cài Python 3.11+ (tick "Add python.exe to PATH") và Git.
+2. `git clone https://github.com/vtrinhit/grok-tele.git` vào thư mục bất kỳ, chạy `setup.bat`, điền `.env`.
+3. Thêm tài khoản: chạy `login.bat` trên VPS (khuyên dùng), hoặc copy `accounts.yaml` từ máy cũ sang.
+   **Một session không được chạy ở 2 máy cùng lúc** (Telegram sẽ huỷ session → tài khoản `dead`).
+   Nếu copy `accounts.yaml`, tắt hẳn GrokTele ở máy cũ trước (`stop.bat`, gỡ autostart).
+4. `install-autostart.bat` để tự chạy ẩn khi VPS khởi động và đăng nhập. Muốn chạy cả khi chưa đăng nhập RDP,
+   bật auto-logon cho user Windows, hoặc tạo task "Run whether user is logged on or not" trong Task Scheduler.
+5. ReelFB phải chạy **trên cùng VPS**, vì API trao đổi bằng đường dẫn file (`imagePath`, `outputPath`).
+   Hai bên không cần chung ổ đĩa hay thư mục, chỉ cần đường dẫn tuyệt đối hợp lệ trên VPS.
+   API chỉ nghe `127.0.0.1`, không cần mở firewall.
+
 ## Cài đặt lần đầu (thủ công)
 
 ```bat
-cd D:\MMO\GrokTele
+cd <thư mục source>
 python -m venv .venv
 .venv\Scripts\python -m pip install -e .[dev]
 copy .env.example .env
@@ -46,8 +62,10 @@ Tài khoản phải còn hạn gói của bot (`/status` trong bot báo "Còn h�
 ## Chạy thử 1 video (không cần server)
 
 ```bat
-.venv\Scripts\python -m groktele try acc1 D:\anh\hoa.jpg "Camera zoom chậm vào bó hoa" --resolution 1080p
+.venv\Scripts\python -m groktele try acc1 C:\anh\hoa.jpg "Camera zoom chậm vào bó hoa" --resolution 1080p
 ```
+
+Tắt server trước khi chạy `try` (cùng một session không nên chạy 2 nơi cùng lúc).
 
 ## Chạy server
 
@@ -57,7 +75,9 @@ Nháy đúp `start.bat` (tự khởi động lại nếu bị tắt), hoặc:
 .venv\Scripts\python -m groktele serve
 ```
 
-Nghe tại `http://127.0.0.1:8888`. Tài liệu API tương tác: `http://127.0.0.1:8888/docs`.
+Nghe tại `http://127.0.0.1:8888` (đổi bằng `GROKTELE_PORT` trong `.env`). Tài liệu API: `http://127.0.0.1:8888/docs`.
+
+Cổng đang bận hoặc thiếu `.env` thì server báo lỗi rõ rồi dừng hẳn (không lặp khởi động lại).
 
 Tự chạy khi bật máy: nháy đúp `install-autostart.bat`.
 
@@ -67,6 +87,11 @@ ReelFB → Settings → Video → provider **MultiKit**:
 - URL: `http://127.0.0.1:8888`
 - API key: gõ bất kỳ (GrokTele không kiểm tra key trừ khi đặt `GROKTELE_API_KEY` trong `.env`)
 - Tỷ lệ: chỉ `9:16` hoặc `16:9`. Thời lượng: 6 / 10 / 15. Chất lượng: `720p` hoặc `1080p` (`480p` tự nâng lên 720p).
+- Client MultiKit của ReelFB hiện chỉ gửi `480p`/`720p`. Muốn 1080p qua ReelFB, thêm `"1080p"` vào
+  `_VALID_RESOLUTIONS` trong `backend/services/multikit.py` của ReelFB.
+- Bot giữ tỷ lệ theo ảnh gốc: ảnh vuông cho video vuông dù chọn 9:16. Muốn video dọc thì dùng ảnh dọc.
+- Lô lớn: ReelFB chờ mỗi job tối đa `video_multikit_timeout` (mặc định 3600s), tính cả thời gian xếp hàng.
+  Với 1 tài khoản, khoảng 35 job đầu xong kịp; lô lớn hơn thì tăng timeout hoặc thêm tài khoản.
 
 ## Lệnh hằng ngày
 
