@@ -132,7 +132,7 @@ Log: `data\groktele.log`. Dữ liệu job: `data\groktele.db`.
 | Hết hạn gói | Tài khoản `expired`, job chuyển sang tài khoản khác. Gia hạn xong chạy `resume` |
 | Session bị đăng xuất | Tài khoản `dead`. Chạy lại `login` rồi khởi động lại server |
 | Tắt app giữa chừng | Mở lại, job dở được chạy lại (hoặc nhận luôn video bot gửi muộn) |
-| ReelFB huỷ job khi bot đang render | Gửi `/cancel`. Bot xác nhận và 60s không còn dấu hiệu render thì nhận job mới; nếu bot vẫn render thì chờ video đó (tối đa 10 phút) và bỏ đi, để video không bị gán nhầm job |
+| ReelFB huỷ job khi bot đang render | Gửi `/cancel`. Bot xác nhận và 20s không còn dấu hiệu render (`GROKTELE_CANCEL_QUIET`) thì nhận job mới; nếu bot vẫn render thì chờ video đó (tối đa 10 phút) và bỏ đi, để video không bị gán nhầm job |
 | Gói của bot còn dưới 24 giờ | Cảnh báo trong log, `05.status.bat` và `GET /grok/accounts` (`expiresInHours`) |
 | Không còn tài khoản dùng được | Job đang chờ fail ngay với `no_account_available` (ReelFB không phải chờ hết timeout) |
 

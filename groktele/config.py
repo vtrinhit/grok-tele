@@ -76,8 +76,8 @@ class Settings:
     ui_timeout: float = 60.0
     video_timeout: float = 300.0  # video thật ~1–2 phút; quá 5 phút thì /cancel và thử lại
     # Sau /cancel, không thấy dấu hiệu render (video, tin % được cập nhật) trong ngần này giây → coi như đã huỷ.
-    # Tin % thật có lúc 20–30s mới cập nhật một lần, nên giữ ≥ 60s.
-    cancel_quiet: float = 60.0
+    # Nếu /cancel không dừng được render thì video muộn có thể lọt sang job sau → khi đó tăng lên 60 (.env).
+    cancel_quiet: float = 20.0
     maintenance_cooldown: float = 300.0
     network_cooldown: float = 30.0
     health_interval: float = 1800.0
