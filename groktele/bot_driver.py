@@ -103,6 +103,8 @@ def classify(text: str) -> Optional[str]:
         return "progress"
     if "nhiệm vụ đã hoàn thành" in t:
         return "done"
+    if "làm mới trạng thái" in t or "đã hủy" in t or "đã huỷ" in t:
+        return "cancelled"  # trả lời /cancel: "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé."
     if "thông tin tài khoản" in t or "trạng thái:" in t:
         return "status"
     if any(k in t for k in _EXPIRED):
@@ -329,13 +331,20 @@ async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, vide
     return JobResult(path=output, bytes=size, duration_ms=video.video_duration_ms)
 
 
-async def find_orphan_outcome(chat: BotChat, baseline: int) -> tuple[str, Optional[BotMessage]]:
+async def find_orphan_outcome(chat: BotChat, baseline: int, cancel_at: Optional[float] = None,
+                              cancel_quiet: float = 45.0, now: Optional[float] = None) -> tuple[str, Optional[BotMessage]]:
     """Render dở bắt đầu sau tin `baseline` đã có kết quả chưa (đọc lịch sử chat).
 
     Trả về ("video", msg) khi video đã về, ("ended", None) khi bot báo lỗi / reset / hoàn thành mà không có video,
     ("pending", None) khi còn đang render.
+
+    `cancel_at`: thời điểm bot xác nhận /cancel. Nếu sau đó `cancel_quiet` giây không có dấu hiệu render
+    (tin % mới hoặc được sửa, video) thì coi như render đã bị huỷ.
     """
+    import time as _time
+
     accepted = False
+    alive_after_cancel = False
     for msg in await chat.history_after(baseline):
         if msg.has_video:
             return "video", msg
@@ -345,10 +354,43 @@ async def find_orphan_outcome(chat: BotChat, baseline: int) -> tuple[str, Option
         elif cls == "reset" or (cls in ("done", "error") and accepted):
             # "done"/lỗi chỉ tính khi sau "Đã nhận yêu cầu" của chính render này (tránh tin "done" của job trước).
             return "ended", None
+        if cancel_at is not None and cls == "progress" and msg.ts > cancel_at + 3:
+            alive_after_cancel = True  # bot vẫn cập nhật % sau /cancel → render chưa bị huỷ
+    if cancel_at is not None and not alive_after_cancel:
+        if (now if now is not None else _time.time()) - cancel_at >= cancel_quiet:
+            return "ended", None
     return "pending", None
 
 
+async def send_cancel(chat: BotChat, timeout: float = 15.0) -> bool:
+    """Gửi /cancel ("làm mới trạng thái" của bot). True khi bot xác nhận."""
+    baseline = await chat.last_message_id()
+    await chat.send_text("/cancel")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        await asyncio.sleep(0.5)
+        for msg in await chat.history_after(baseline):
+            if classify(msg.text) == "cancelled":
+                return True
+    return False
+
+
 _EXPIRES_RE = re.compile(r"hết hạn lúc:\s*([0-9:]+\s+[0-9/]+)")
+
+
+def hours_left(expires_at: Optional[str], now: Optional[float] = None) -> Optional[float]:
+    """'18:24 25/10/2026' (giờ Việt Nam, UTC+7) → số giờ còn lại; None nếu không đọc được."""
+    import time as _time
+    from datetime import datetime, timedelta, timezone
+
+    if not expires_at:
+        return None
+    try:
+        dt = datetime.strptime(expires_at.strip(), "%H:%M %d/%m/%Y").replace(tzinfo=timezone(timedelta(hours=7)))
+    except ValueError:
+        return None
+    return round((dt.timestamp() - (now if now is not None else _time.time())) / 3600, 1)
 
 
 async def check_status(chat: BotChat, timeout: float = 30.0) -> StatusInfo:

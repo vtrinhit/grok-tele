@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -22,6 +23,7 @@ EXPIRED = ("🎉 Bạn đã nhận video thử thành công! Để tiếp tục 
            "admin liên hệ.")
 RENDER_ERROR = "❌ Có lỗi xảy ra khi tạo video. Bạn hãy gửi lại ảnh và prompt nhé."
 DONE = "✅ Nhiệm vụ đã hoàn thành, nếu bạn muốn tạo thêm hãy gửi nhé!"
+CANCELLED = "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé. 🎬"
 
 
 class CaptionTooLong(Exception):
@@ -35,6 +37,7 @@ class Scenario:
     ignore_clicks: bool = False  # bot không phản hồi khi bấm tuỳ chọn
     video_bytes: int = 20_000
     step: float = 0.01           # độ trễ giữa các tin của bot
+    cancel_kills: bool = True    # /cancel có dừng render đang chạy không
 
 
 class FakeChat:
@@ -64,7 +67,7 @@ class FakeChat:
     def bot_says(self, text: str = "", buttons: Optional[list[list[str]]] = None, video: bool = False,
                  prompt: Optional[str] = None) -> BotMessage:
         m = BotMessage(id=self._id(), text=text, buttons=buttons or [], has_video=video,
-                       video_duration_ms=10_000 if video else None)
+                       video_duration_ms=10_000 if video else None, ts=time.time())
         if video:
             m.raw = self._prompt if prompt is None else prompt
         self.messages[m.id] = m
@@ -72,6 +75,7 @@ class FakeChat:
         return m
 
     def _edit(self, m: BotMessage) -> None:
+        m.ts = time.time()
         self.messages[m.id] = m
         self.queue.put_nowait(ChatEvent("edit", copy.deepcopy(m)))
 
@@ -130,6 +134,21 @@ class FakeChat:
     async def send_text(self, text: str) -> int:
         self.texts.append(text)
         my_id = self._id()
+        if text == "/cancel":
+            rt = getattr(self, "_render_task", None)
+            if rt is not None and not rt.done() and getattr(self, "_render_sc", self.default).cancel_kills:
+                rt.cancel()
+                for mid, m in list(self.messages.items()):
+                    if "Đang tạo video" in (m.text or ""):
+                        del self.messages[mid]
+            self._awaiting_prompt = False
+
+            async def ack() -> None:
+                await asyncio.sleep(0.005)
+                self.bot_says(CANCELLED)
+
+            self._later(ack)
+            return my_id
         if getattr(self, "_awaiting_prompt", False) and not text.startswith("/"):
             assert len(text) <= 4096
             self._awaiting_prompt = False
@@ -167,7 +186,9 @@ class FakeChat:
         sc = self._current or self.default
         if "Tạo Video" in label:
             del self.messages[msg_id]
-            self._later(lambda: self._render(sc))
+            self._render_task = asyncio.ensure_future(self._render(sc))
+            self._render_sc = sc
+            self._tasks.append(self._render_task)
             return
         if sc.ignore_clicks:
             return

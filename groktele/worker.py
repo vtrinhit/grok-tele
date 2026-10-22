@@ -17,8 +17,10 @@ from groktele.bot_driver import (
     RetryableError,
     check_status,
     find_orphan_outcome,
+    hours_left,
     human_delay,
     run_job,
+    send_cancel,
 )
 from groktele.chat import AuthRequired, BotChat
 from groktele.config import AccountConfig, Settings
@@ -186,7 +188,8 @@ class AccountWorker:
         """True = render dở đã có kết quả (hoặc quá hạn chờ), tài khoản nhận job mới được."""
         assert self.chat is not None
         job_id, baseline = acc["orphan_job"], int(acc["orphan_baseline"] or 0)
-        outcome, video = await find_orphan_outcome(self.chat, baseline)
+        outcome, video = await find_orphan_outcome(self.chat, baseline, cancel_at=acc.get("orphan_cancel_at"),
+                                                   cancel_quiet=self.settings.cancel_quiet)
         if outcome == "video" and video is not None:
             job = self.db.get_job(job_id)
             if job and self.db.claim_specific(job_id, self.name):
@@ -206,7 +209,8 @@ class AccountWorker:
             self.db.clear_orphan(self.name)
             return True
         if outcome == "ended":
-            log.info("[%s] render dở của %s đã kết thúc không có video", self.name, job_id)
+            log.info("[%s] render dở của %s đã kết thúc%s", self.name, job_id,
+                     " (đã /cancel)" if acc.get("orphan_cancel_at") else " không có video")
             self.db.clear_orphan(self.name)
             return True
         waited = time.time() - float(acc.get("orphan_since") or 0)
@@ -265,6 +269,9 @@ class AccountWorker:
             self._cooldown(self.settings.maintenance_cooldown / 2, f"/status không trả lời: {info.text[:120]}")
             return False
         self._set("active", None)
+        left = hours_left(info.expires_at)
+        if left is not None and left < 24:
+            log.warning("[%s] gói của bot còn %.1f giờ (hết hạn %s) — nhớ gia hạn", self.name, left, info.expires_at)
         self._next_health = time.time() + self.settings.health_interval
         return True
 
@@ -282,6 +289,7 @@ class AccountWorker:
             self.db.set_progress(job_id, stage, progress)
 
         state = JobState()
+        send_cancel_cmd = False  # job bị huỷ / timeout khi bot đang render → /cancel cho đỡ mất thời gian
         self.current_job = job_id
         self.job_task = asyncio.create_task(
             run_job(self.chat, params, ui_timeout=self.settings.ui_timeout,
@@ -292,30 +300,52 @@ class AccountWorker:
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling():
-                # App đang tắt: trả job về hàng đợi, lần sau chạy lại không mất lượt.
+                # App đang tắt: trả job về hàng đợi; giữ render để lần sau nhận video về muộn (không /cancel).
                 self.db.requeue(job_id, refund_attempt=True)
+                if state.orphaned:
+                    self.db.set_orphan(self.name, job_id, state.render_baseline)  # type: ignore[arg-type]
                 raise
             log.info("[%s] %s đã huỷ", self.name, job_id)
+            send_cancel_cmd = True
             return
         except Exception as exc:
             self._handle_failure(job, exc)
             if isinstance(exc, NETWORK_ERRORS):
                 await self._drop_chat()
+            elif isinstance(exc, RetryableError) and exc.kind == "timeout":
+                send_cancel_cmd = True
             return
         finally:
             self.current_job = None
             self.job_task = None
-            if state.orphaned:
-                # Bot có thể vẫn đang render job này → không gửi job mới cho tới khi video đó về (hoặc quá hạn).
+            task = asyncio.current_task()
+            if state.orphaned and not (task is not None and task.cancelling()):
+                # Bot có thể vẫn đang render job này → không gửi job mới cho tới khi render đó kết thúc.
                 self.db.set_orphan(self.name, job_id, state.render_baseline)  # type: ignore[arg-type]
-                log.info("[%s] %s dừng khi bot đang render, chờ video về muộn trước khi nhận job mới",
-                         self.name, job_id)
+                if send_cancel_cmd and self.chat is not None:
+                    await self._cancel_render(job_id)
+                else:
+                    log.info("[%s] %s dừng khi bot đang render, chờ video về muộn trước khi nhận job mới",
+                             self.name, job_id)
 
         if self.db.finish_success(job_id, result_bytes=result.bytes,
                                   duration_ms=result.duration_ms or int(job["duration"]) * 1000):
             log.info("[%s] %s xong: %s (%d KB)", self.name, job_id, result.path, result.bytes // 1024)
         else:
             log.info("[%s] %s xong nhưng job đã bị huỷ, bỏ kết quả", self.name, job_id)
+
+    async def _cancel_render(self, job_id: str) -> None:
+        assert self.chat is not None
+        try:
+            confirmed = await send_cancel(self.chat, timeout=15)
+        except Exception as exc:  # /cancel là tối ưu, lỗi thì vẫn còn cơ chế chờ video về muộn
+            log.warning("[%s] gửi /cancel lỗi: %s", self.name, exc)
+            return
+        if confirmed:
+            self.db.set_account(self.name, orphan_cancel_at=time.time())
+            log.info("[%s] %s đã /cancel, bot làm mới trạng thái", self.name, job_id)
+        else:
+            log.warning("[%s] %s gửi /cancel nhưng bot không xác nhận, chờ video về muộn", self.name, job_id)
 
     def _handle_failure(self, job: dict, exc: BaseException) -> None:
         job_id = job["id"]

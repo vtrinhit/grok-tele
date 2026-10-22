@@ -64,8 +64,15 @@ def _status(settings: Settings) -> None:
         cd = ""
         if a["status"] == "cooldown" and a["cooldown_until"]:
             cd = f" còn {max(0, int(a['cooldown_until'] - time.time()))}s"
+        from groktele.bot_driver import hours_left
+
+        left = hours_left(a["expires_at"])
+        left_txt = f" (còn {left:.0f}h)" if left is not None else ""
+        warn = "  ⚠ SẮP HẾT HẠN" if left is not None and left < 24 else ""
         print(f"  {a['name']:<12} {a['status']:<10}{cd}  xong {a['jobs_done']:>5}  hạn {a['expires_at'] or '?'}"
-              f"  {a['telegram_user'] or ''}")
+              f"{left_txt}{warn}  {a['telegram_user'] or ''}")
+        if a.get("orphan_job"):
+            print(f"               đang chờ video về muộn của {a['orphan_job']}")
         if a["reason"] and a["status"] != "active":
             print(f"               lý do: {a['reason']}")
     s = db.stats()

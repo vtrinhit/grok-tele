@@ -38,6 +38,7 @@ REAL_TEXTS = {
     "🌸 Chào mừng bạn đến với Bot Tạo Video AI Grok! 🎬✨\n\n🎁 Quà tặng trải nghiệm miễn phí:\n- 01 lượt Tạo Video AI": None,
     "💌Hello anh em, bot đã cập nhật thêm chức năng tạo ảnh và chức năng nối dài video": None,
     "🆔 ID Telegram của bạn: 1790523934": None,
+    "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé. 🎬": "cancelled",
 }
 
 
@@ -167,3 +168,31 @@ async def test_short_prompt_stays_caption(image: Path, tmp_path: Path) -> None:
     chat = FakeChat()
     await run_job(chat, _params(image, tmp_path), ui_timeout=2, video_timeout=2)
     assert chat.photos[0][1] == "Tạo video hoa nở" and chat.texts == []
+
+
+def test_hours_left_vietnam_time() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from groktele.bot_driver import hours_left
+
+    now = datetime(2026, 10, 24, 18, 24, tzinfo=timezone(timedelta(hours=7))).timestamp()
+    assert hours_left("18:24 25/10/2026", now=now) == 24.0
+    assert hours_left("bad", now=now) is None and hours_left(None) is None
+
+
+async def test_find_orphan_outcome_after_cancel(image: Path, tmp_path: Path) -> None:
+    import time
+
+    from groktele.bot_driver import find_orphan_outcome
+
+    chat = FakeChat()
+    base = await chat.last_message_id()
+    chat.bot_says("⏳ Đã nhận yêu cầu Tạo Video [1 Ảnh | Tỷ lệ 9:16 | 10s | 720p].")
+    t = time.time()
+    assert (await find_orphan_outcome(chat, base, cancel_at=t, cancel_quiet=60, now=t + 10))[0] == "pending"
+    assert (await find_orphan_outcome(chat, base, cancel_at=t, cancel_quiet=60, now=t + 61))[0] == "ended"
+    # tin % được sửa sau /cancel → render còn sống, không coi là đã huỷ
+    m = chat.bot_says("🎬 Đang tạo video (9:16 | 720p): 40%")
+    m.ts = t + 30
+    chat.messages[m.id] = m
+    assert (await find_orphan_outcome(chat, base, cancel_at=t, cancel_quiet=60, now=t + 61))[0] == "pending"

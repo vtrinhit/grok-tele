@@ -45,10 +45,11 @@ async def test_cancelled_render_not_given_to_next_job(settings: Settings, image:
 
 
 async def test_timeout_rescued_by_late_video(settings: Settings, image: Path, tmp_path: Path) -> None:
-    # Bot render lâu hơn video_timeout: không gửi lại ảnh, dùng luôn video về muộn cho chính job đó.
+    # /cancel không dừng được render: không gửi lại ảnh, dùng luôn video về muộn cho chính job đó.
     settings.video_timeout = 0.5
     settings.ui_timeout = 5
-    f = Factory({"acc1": [Scenario(step=0.6)]})
+    settings.cancel_quiet = 20
+    f = Factory({"acc1": [Scenario(step=0.6, cancel_kills=False)]})
     async with running(settings, f) as (client, _):
         a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
         job = await wait_status(client, a, ("succeeded", "failed"), timeout=20)
@@ -144,3 +145,50 @@ async def test_pinned_to_known_account(settings: Settings, image: Path, tmp_path
     async with running(settings, Factory()) as (client, _):
         jid = (await _post(client, image, "x", tmp_path / "x.mp4", accountId="acc2")).json()["jobId"]
         assert (await wait_status(client, jid, ("succeeded", "failed")))["accountLabel"] == "acc2"
+
+
+async def test_timeout_sends_cancel_and_retries_at_once(settings: Settings, image: Path, tmp_path: Path) -> None:
+    # Timeout → /cancel → bot dừng render → thử lại ngay, không chờ video về muộn.
+    settings.video_timeout = 0.5
+    settings.ui_timeout = 5
+    settings.orphan_grace = 60  # nếu không nhờ /cancel thì sẽ phải chờ rất lâu
+    f = Factory({"acc1": [Scenario(render="silent"), Scenario(step=0.05)]})
+    async with running(settings, f) as (client, db):
+        a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+        job = await wait_status(client, a, ("succeeded", "failed"), timeout=10)
+        assert job["status"] == "succeeded" and job["attempts"] == 2, job
+        chat = f.chats["acc1"]
+        assert "/cancel" in chat.texts and len(chat.photos) == 2
+        assert db.get_account("acc1")["orphan_job"] is None
+
+
+async def test_reelfb_cancel_sends_cancel_and_frees_account(settings: Settings, image: Path, tmp_path: Path) -> None:
+    settings.ui_timeout = 5
+    settings.video_timeout = 30
+    settings.orphan_grace = 60
+    f = Factory({"acc1": [Scenario(step=0.6), Scenario(step=0.05)]})
+    async with running(settings, f) as (client, _):
+        a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+        await _wait_stage(client, a, "generate")
+        await client.delete(f"/grok/jobs/{a}")
+        b = (await _post(client, image, "JOB-B", tmp_path / "b.mp4")).json()["jobId"]
+        job_b = await wait_status(client, b, ("succeeded", "failed"), timeout=8)
+        assert job_b["status"] == "succeeded"
+        assert (tmp_path / "b.mp4").read_bytes().startswith(b"VIDEO:JOB-B|")
+        assert "/cancel" in f.chats["acc1"].texts
+
+
+async def test_cancel_not_honoured_still_no_mismatch(settings: Settings, image: Path, tmp_path: Path) -> None:
+    # Bot xác nhận /cancel nhưng vẫn render và gửi video: phải bỏ video đó, B nhận đúng video của B.
+    settings.ui_timeout = 5
+    settings.video_timeout = 30
+    settings.cancel_quiet = 20
+    f = Factory({"acc1": [Scenario(step=0.6, cancel_kills=False), Scenario(step=0.3)]})
+    async with running(settings, f) as (client, _):
+        a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+        await _wait_stage(client, a, "generate")
+        await client.delete(f"/grok/jobs/{a}")
+        b = (await _post(client, image, "JOB-B", tmp_path / "b.mp4")).json()["jobId"]
+        job_b = await wait_status(client, b, ("succeeded", "failed"), timeout=20)
+        assert job_b["status"] == "succeeded"
+        assert (tmp_path / "b.mp4").read_bytes().startswith(b"VIDEO:JOB-B|")

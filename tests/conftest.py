@@ -24,6 +24,7 @@ def settings(tmp_path: Path) -> Settings:
     s.orphan_poll = 0.05
     s.orphan_grace = 8.0
     s.no_account_fail_check = 0.1
+    s.cancel_quiet = 0.5
     s.accounts = [AccountConfig(name="acc1", session="fake")]
     return s
 

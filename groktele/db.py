@@ -54,13 +54,15 @@ CREATE TABLE IF NOT EXISTS accounts (
     telegram_user  TEXT,
     orphan_job     TEXT,
     orphan_baseline INTEGER,
-    orphan_since   REAL
+    orphan_since   REAL,
+    orphan_cancel_at REAL
 );
 """
 
 # Cột thêm sau bản đầu: DB cũ (đã chạy trên VPS) được ALTER khi mở.
 _MIGRATIONS = {
-    "accounts": {"orphan_job": "TEXT", "orphan_baseline": "INTEGER", "orphan_since": "REAL"},
+    "accounts": {"orphan_job": "TEXT", "orphan_baseline": "INTEGER", "orphan_since": "REAL",
+                 "orphan_cancel_at": "REAL"},
 }
 
 
@@ -198,10 +200,11 @@ class DB:
         ) > 0
 
     def set_orphan(self, account: str, job_id: str, baseline: int) -> None:
-        self.set_account(account, orphan_job=job_id, orphan_baseline=int(baseline), orphan_since=time.time())
+        self.set_account(account, orphan_job=job_id, orphan_baseline=int(baseline), orphan_since=time.time(),
+                         orphan_cancel_at=None)
 
     def clear_orphan(self, account: str) -> None:
-        self.set_account(account, orphan_job=None, orphan_baseline=None, orphan_since=None)
+        self.set_account(account, orphan_job=None, orphan_baseline=None, orphan_since=None, orphan_cancel_at=None)
 
     def set_progress(self, job_id: str, stage: str, progress: float) -> None:
         self._exec("UPDATE jobs SET stage = ?, progress = ? WHERE id = ? AND status = 'running'",

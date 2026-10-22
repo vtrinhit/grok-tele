@@ -74,7 +74,10 @@ class Settings:
     default_resolution: str = "720p"
     max_attempts: int = 3
     ui_timeout: float = 60.0
-    video_timeout: float = 900.0
+    video_timeout: float = 300.0  # video thật ~1–2 phút; quá 5 phút thì /cancel và thử lại
+    # Sau /cancel, không thấy dấu hiệu render (video, tin % được cập nhật) trong ngần này giây → coi như đã huỷ.
+    # Tin % thật có lúc 20–30s mới cập nhật một lần, nên giữ ≥ 60s.
+    cancel_quiet: float = 60.0
     maintenance_cooldown: float = 300.0
     network_cooldown: float = 30.0
     health_interval: float = 1800.0
@@ -130,6 +133,8 @@ def load_settings(root: Optional[Path] = None) -> Settings:
     s.default_resolution = _env("GROKTELE_DEFAULT_RESOLUTION", s.default_resolution)
     s.max_attempts = int(_env("GROKTELE_MAX_ATTEMPTS", str(s.max_attempts)))
     s.video_timeout = float(_env("GROKTELE_VIDEO_TIMEOUT", str(s.video_timeout)))
+    s.cancel_quiet = float(_env("GROKTELE_CANCEL_QUIET", str(s.cancel_quiet)))
+    s.orphan_grace = float(_env("GROKTELE_ORPHAN_GRACE", str(s.orphan_grace)))
     s.accounts = load_accounts(s.accounts_file)
     return s
 

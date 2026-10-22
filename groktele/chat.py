@@ -22,6 +22,7 @@ class BotMessage:
     has_video: bool = False
     video_duration_ms: Optional[int] = None
     raw: Any = None
+    ts: float = 0.0  # thời điểm gửi hoặc sửa gần nhất (epoch giây)
 
 
 @dataclass
@@ -56,6 +57,7 @@ def _to_bot_message(m: Any) -> BotMessage:
     for attr in getattr(doc, "attributes", None) or []:
         if hasattr(attr, "duration") and attr.duration:
             duration_ms = int(float(attr.duration) * 1000)
+    when = getattr(m, "edit_date", None) or getattr(m, "date", None)
     return BotMessage(
         id=int(m.id),
         text=m.raw_text or m.message or "",
@@ -63,6 +65,7 @@ def _to_bot_message(m: Any) -> BotMessage:
         has_video=bool(video) or mime.startswith("video/"),
         video_duration_ms=duration_ms,
         raw=m,
+        ts=when.timestamp() if when else 0.0,
     )
 
 

@@ -124,14 +124,16 @@ Log: `data\groktele.log`. Dữ liệu job: `data\groktele.db`.
 
 | Tình huống | GrokTele làm gì |
 |---|---|
-| Timeout, bot báo lỗi render | Thử lại, tối đa 3 lượt rồi `failed` |
+| Bot báo lỗi render | Thử lại, tối đa 3 lượt rồi `failed` |
+| Quá 5 phút chưa có video (`GROKTELE_VIDEO_TIMEOUT`) | Gửi `/cancel` cho bot rồi thử lại ngay. Nếu bot vẫn gửi video muộn thì dùng luôn video đó |
 | Bot bảo trì / reset mạng | Trả job về hàng đợi (không mất lượt), tài khoản nghỉ 5 phút rồi hỏi `/status` |
 | FloodWait của Telegram | Nghỉ đúng số giây Telegram yêu cầu |
 | Mất mạng | Tự kết nối lại |
 | Hết hạn gói | Tài khoản `expired`, job chuyển sang tài khoản khác. Gia hạn xong chạy `resume` |
 | Session bị đăng xuất | Tài khoản `dead`. Chạy lại `login` rồi khởi động lại server |
 | Tắt app giữa chừng | Mở lại, job dở được chạy lại (hoặc nhận luôn video bot gửi muộn) |
-| Job bị huỷ / timeout khi bot đang render | Tài khoản chờ video về muộn đó (tối đa 10 phút) rồi mới nhận job mới, để video không bị gán nhầm job. Nếu job đang chờ thử lại thì dùng luôn video muộn đó |
+| ReelFB huỷ job khi bot đang render | Gửi `/cancel`. Bot xác nhận và 60s không còn dấu hiệu render thì nhận job mới; nếu bot vẫn render thì chờ video đó (tối đa 10 phút) và bỏ đi, để video không bị gán nhầm job |
+| Gói của bot còn dưới 24 giờ | Cảnh báo trong log, `05.status.bat` và `GET /grok/accounts` (`expiresInHours`) |
 | Không còn tài khoản dùng được | Job đang chờ fail ngay với `no_account_available` (ReelFB không phải chờ hết timeout) |
 
 Tỷ lệ `1:1`, `2:3`, `3:4`, `4:5` được gửi bằng nút Dọc 9:16; `3:2`, `4:3`, `21:9` bằng nút Ngang 16:9.

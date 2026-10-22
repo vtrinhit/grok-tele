@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from groktele import __version__
 from groktele.config import ASPECT_MAP, RESOLUTION_MAP, VALID_DURATIONS, Settings
+from groktele.bot_driver import hours_left
 from groktele.db import DB, TERMINAL, new_id
 from groktele.worker import Manager
 
@@ -370,6 +371,8 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
                 "currentJob": w.current_job,
                 "jobsDone": a.get("jobs_done", 0),
                 "expiresAt": a.get("expires_at"),
+                "expiresInHours": hours_left(a.get("expires_at")),
+                "waitingLateVideoOf": a.get("orphan_job"),
                 "lastCheck": a.get("last_check"),
                 "telegramUser": a.get("telegram_user"),
                 "usableFor": {"480p": usable, "720p": usable, "1080p": usable},
