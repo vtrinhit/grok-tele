@@ -6,7 +6,7 @@ Ngày: 2026-10-22. Thay thế phần kiến trúc của `docs/grok-video-tool-sp
 
 App Windows chạy nền, tạo video hàng loạt qua bot Telegram **@GrokKian_bot** ("Grok Không Giới Hạn Theo Tuần")
 bằng 1–N tài khoản Telegram (userbot Telethon). Expose **API giống hệt MultiKit Grok** để ReelFB Studio dùng lại
-provider `multikit` có sẵn, chỉ đổi URL sang `http://127.0.0.1:17891`.
+provider `multikit` có sẵn, chỉ đổi URL sang `http://127.0.0.1:8888`.
 
 Thành công = ReelFB gửi job, nhận file mp4 ở `outputPath`, app tự chạy 24/7 không cần can thiệp,
 tự xử lý bot bảo trì / FloodWait / mất mạng / tài khoản hết hạn.
@@ -79,7 +79,7 @@ Restart app: job `running` → `queued`. Không còn tài khoản usable (mọi 
 `POST` trả `409 conflict` với `details.reason=no_account_available`.
 Health check: khi khởi động và mỗi 30 phút rảnh, gửi `/status`, lưu `expiresAt`.
 
-## 6. API (127.0.0.1:17891)
+## 6. API (127.0.0.1:8888)
 
 Giống MultiKit: `GET /health`, `POST /grok/jobs`, `POST /grok/jobs/batch`, `GET /grok/jobs/{id}`, `GET /grok/jobs`,
 `DELETE /grok/jobs/{id}`, `POST /grok/jobs/{id}/retry`, `GET /grok/accounts`, `GET /grok/stats`.

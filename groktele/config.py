@@ -9,7 +9,23 @@ from urllib.parse import unquote, urlparse
 
 import yaml
 
-ROOT = Path(os.environ.get("GROKTELE_HOME") or Path(__file__).resolve().parent.parent)
+def _detect_root() -> Path:
+    """Thư mục chứa .env / accounts.yaml / data. Ưu tiên GROKTELE_HOME, rồi thư mục source, rồi thư mục hiện tại."""
+    env = os.environ.get("GROKTELE_HOME", "").strip()
+    if env:
+        return Path(env).resolve()
+    source = Path(__file__).resolve().parent.parent
+    if (source / "pyproject.toml").exists():
+        return source
+    return Path.cwd().resolve()
+
+
+ROOT = _detect_root()
+
+
+def _read_text(path: Path) -> str:
+    # utf-8-sig: bỏ BOM mà Notepad (Windows Server) hay thêm; replace: file ANSI có dấu cũng không làm crash.
+    return path.read_text(encoding="utf-8-sig", errors="replace")
 
 VALID_ASPECTS = ("9:16", "16:9")
 VALID_DURATIONS = (6, 10, 15)
@@ -21,7 +37,7 @@ def load_dotenv(path: Path) -> None:
     """KEY=VALUE mỗi dòng; không ghi đè biến môi trường đã có."""
     if not path.exists():
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in _read_text(path).splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -44,7 +60,7 @@ class Settings:
     api_hash: str = ""
     bot: str = "GrokKian_bot"
     host: str = "127.0.0.1"
-    port: int = 17891
+    port: int = 8888
     api_key: str = ""
     root: Path = ROOT
     default_aspect: str = "9:16"
@@ -112,7 +128,7 @@ def load_settings(root: Optional[Path] = None) -> Settings:
 def load_accounts(path: Path) -> list[AccountConfig]:
     if not path.exists():
         return []
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    raw = yaml.safe_load(_read_text(path)) or []
     if isinstance(raw, dict):
         raw = raw.get("accounts") or []
     out: list[AccountConfig] = []

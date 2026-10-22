@@ -99,11 +99,18 @@ class TelethonChat:
             retry_delay=3,
             auto_reconnect=True,
         )
-        await client.connect()
-        if not await client.is_user_authorized():
-            await client.disconnect()
-            raise AuthRequired("Session không hợp lệ hoặc đã bị đăng xuất, chạy lại: python -m groktele login <tên>")
-        entity = await client.get_entity(bot)
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                raise AuthRequired("Session không hợp lệ hoặc đã bị đăng xuất, chạy lại: python -m groktele login <tên>")
+            entity = await client.get_entity(bot)
+        except BaseException:
+            # Không để lại kết nối treo khi thử lại nhiều lần.
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise
         return cls(client, entity)
 
     async def me(self) -> str:

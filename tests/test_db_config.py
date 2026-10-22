@@ -96,3 +96,45 @@ def test_save_and_load_accounts_and_env(tmp_path: Path, monkeypatch: pytest.Monk
     (tmp_path / ".env").write_text("TG_API_ID=42\nTG_API_HASH=abc  # comment\nGROKTELE_PORT=18000\n", encoding="utf-8")
     s = load_settings(tmp_path)
     assert (s.api_id, s.api_hash, s.port, len(s.accounts)) == (42, "abc", 18000, 2)
+
+
+def test_env_with_bom_and_ansi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for k in ("TG_API_ID", "TG_API_HASH"):
+        monkeypatch.delenv(k, raising=False)
+    # Notepad trên Windows Server hay lưu UTF-8 có BOM; comment tiếng Việt kiểu ANSI không được làm crash.
+    (tmp_path / ".env").write_bytes(b"\xef\xbb\xbfTG_API_ID=77\r\n# ch\xfa th\xedch\r\nTG_API_HASH=hh\r\n")
+    (tmp_path / "accounts.yaml").write_bytes(b"\xef\xbb\xbf- name: acc1\r\n  session: S\r\n")
+    s = load_settings(tmp_path)
+    assert (s.api_id, s.api_hash, [a.name for a in s.accounts]) == (77, "hh", ["acc1"])
+
+
+def test_serve_exits_3_when_port_busy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
+    from groktele import app as app_mod
+
+    (tmp_path / ".env").write_text("TG_API_ID=1\nTG_API_HASH=x\n", encoding="utf-8")
+    s = load_settings(tmp_path)
+    s.api_id, s.api_hash = 1, "x"
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        s.port = busy.getsockname()[1]
+        with pytest.raises(SystemExit) as ei:
+            app_mod.serve(s)
+    assert ei.value.code == 3
+
+
+def test_serve_exits_2_without_env(tmp_path: Path) -> None:
+    from groktele import app as app_mod
+    from groktele.config import Settings
+
+    with pytest.raises(SystemExit) as ei:
+        app_mod.serve(Settings(root=tmp_path))
+    assert ei.value.code == 2
+
+
+def test_default_port_is_8888() -> None:
+    from groktele.config import Settings
+
+    assert Settings().port == 8888

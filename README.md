@@ -57,14 +57,14 @@ Nháy đúp `start.bat` (tự khởi động lại nếu bị tắt), hoặc:
 .venv\Scripts\python -m groktele serve
 ```
 
-Nghe tại `http://127.0.0.1:17891`. Tài liệu API tương tác: `http://127.0.0.1:17891/docs`.
+Nghe tại `http://127.0.0.1:8888`. Tài liệu API tương tác: `http://127.0.0.1:8888/docs`.
 
 Tự chạy khi bật máy: nháy đúp `install-autostart.bat`.
 
 ## Nối ReelFB Studio
 
 ReelFB → Settings → Video → provider **MultiKit**:
-- URL: `http://127.0.0.1:17891`
+- URL: `http://127.0.0.1:8888`
 - API key: gõ bất kỳ (GrokTele không kiểm tra key trừ khi đặt `GROKTELE_API_KEY` trong `.env`)
 - Tỷ lệ: chỉ `9:16` hoặc `16:9`. Thời lượng: 6 / 10 / 15. Chất lượng: `720p` hoặc `1080p` (`480p` tự nâng lên 720p).
 

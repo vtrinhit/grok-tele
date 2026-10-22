@@ -1,8 +1,11 @@
 """Ghép config + DB + worker + API thành 1 app, và chạy bằng uvicorn."""
 from __future__ import annotations
 
+import atexit
 import logging
 import logging.handlers
+import os
+import socket
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -90,15 +93,37 @@ def build_app(settings: Settings, *, db: Optional[DB] = None, chat_factory: Opti
     return app
 
 
+def _port_free(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
 def serve(settings: Settings) -> None:
+    """Mã thoát: 2 = thiếu cấu hình, 3 = cổng đang bận. start.bat dừng hẳn (không khởi động lại) khi mã >= 2."""
     import uvicorn
 
     setup_logging(settings)
-    if not settings.api_id or not settings.api_hash:
-        log.error("Thiếu TG_API_ID / TG_API_HASH trong .env (lấy tại https://my.telegram.org)")
+    log.info("Thư mục dữ liệu: %s", settings.root)
+    if not (settings.root / ".env").exists():
+        log.error("Không thấy %s. Copy .env.example thành .env rồi điền TG_API_ID, TG_API_HASH",
+                  settings.root / ".env")
         raise SystemExit(2)
+    if not settings.api_id or not settings.api_hash:
+        log.error("Thiếu TG_API_ID / TG_API_HASH trong %s (lấy tại https://my.telegram.org)", settings.root / ".env")
+        raise SystemExit(2)
+    if not _port_free(settings.host, settings.port):
+        log.error("Cổng %s:%d đang bị chiếm (GrokTele đã chạy rồi? chạy stop.bat). Hoặc đổi GROKTELE_PORT trong .env",
+                  settings.host, settings.port)
+        raise SystemExit(3)
     if not settings.accounts:
-        log.warning("accounts.yaml chưa có tài khoản nào. Chạy: python -m groktele login acc1")
+        log.warning("accounts.yaml chưa có tài khoản nào. Chạy login.bat (hoặc python -m groktele login acc1)")
+    pid_file = settings.data_dir / "groktele.pid"
+    pid_file.write_text(str(os.getpid()), encoding="ascii")
+    atexit.register(lambda: pid_file.unlink(missing_ok=True))
     app = build_app(settings)
     log.info("GrokTele nghe tại http://%s:%d (bot @%s, %d tài khoản)", settings.host, settings.port,
              settings.bot, len(settings.accounts))

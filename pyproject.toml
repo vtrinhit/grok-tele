@@ -5,7 +5,6 @@ description = "Batch video generation through the @GrokKian_bot Telegram bot, wi
 requires-python = ">=3.11"
 dependencies = [
   "telethon>=1.36",
-  "cryptg",
   "python-socks[asyncio]",
   "fastapi",
   "uvicorn[standard]",
@@ -21,6 +20,7 @@ packages = ["groktele"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "httpx"]
+fast = ["cryptg"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
