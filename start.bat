@@ -18,5 +18,5 @@ if exist "data\stop.flag" (
   exit /b 0
 )
 echo GrokTele dung lai, khoi dong lai sau 5 giay... (chay stop.bat de dung han)
-timeout /t 5 /nobreak >nul
+"%SystemRoot%\System32\timeout.exe" /t 5 /nobreak >nul
 goto loop
