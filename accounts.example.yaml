@@ -1,0 +1,6 @@
+# Tạo bằng: python -m groktele login acc1
+# Mỗi tài khoản Telegram = 1 luồng tạo video.
+- name: acc1
+  session: "1BVtsOK...dán session string..."
+  proxy: null            # ví dụ socks5://user:pass@1.2.3.4:1080
+  enabled: true

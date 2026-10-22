@@ -1,0 +1,163 @@
+"""Cấu hình: `.env` (api_id/hash, cổng, mặc định) và `accounts.yaml` (session string từng tài khoản)."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+from urllib.parse import unquote, urlparse
+
+import yaml
+
+ROOT = Path(os.environ.get("GROKTELE_HOME") or Path(__file__).resolve().parent.parent)
+
+VALID_ASPECTS = ("9:16", "16:9")
+VALID_DURATIONS = (6, 10, 15)
+# Bot chỉ có 720p và 1080p; 480p (mặc định MultiKit) được nâng lên 720p.
+RESOLUTION_MAP = {"480p": "720p", "720p": "720p", "1080p": "1080p"}
+
+
+def load_dotenv(path: Path) -> None:
+    """KEY=VALUE mỗi dòng; không ghi đè biến môi trường đã có."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.split(" #", 1)[0].strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
+
+
+@dataclass
+class AccountConfig:
+    name: str
+    session: str
+    proxy: Optional[str] = None
+    enabled: bool = True
+
+
+@dataclass
+class Settings:
+    api_id: int = 0
+    api_hash: str = ""
+    bot: str = "GrokKian_bot"
+    host: str = "127.0.0.1"
+    port: int = 17891
+    api_key: str = ""
+    root: Path = ROOT
+    default_aspect: str = "9:16"
+    default_duration: int = 10
+    default_resolution: str = "720p"
+    max_attempts: int = 3
+    ui_timeout: float = 60.0
+    video_timeout: float = 900.0
+    maintenance_cooldown: float = 300.0
+    network_cooldown: float = 30.0
+    health_interval: float = 1800.0
+    idle_poll: float = 1.0
+    action_delay: tuple[float, float] = (0.6, 1.5)
+    upload_ttl_days: int = 7
+    accounts: list[AccountConfig] = field(default_factory=list)
+
+    @property
+    def data_dir(self) -> Path:
+        return self.root / "data"
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "groktele.db"
+
+    @property
+    def uploads_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    @property
+    def outputs_dir(self) -> Path:
+        return self.data_dir / "outputs"
+
+    @property
+    def log_path(self) -> Path:
+        return self.data_dir / "groktele.log"
+
+    @property
+    def accounts_file(self) -> Path:
+        return self.root / "accounts.yaml"
+
+
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def load_settings(root: Optional[Path] = None) -> Settings:
+    root = Path(root or ROOT)
+    load_dotenv(root / ".env")
+    s = Settings(root=root)
+    s.api_id = int(_env("TG_API_ID", "0") or 0)
+    s.api_hash = _env("TG_API_HASH")
+    s.bot = _env("GROKTELE_BOT", s.bot).lstrip("@") or s.bot
+    s.host = _env("GROKTELE_HOST", s.host) or s.host
+    s.port = int(_env("GROKTELE_PORT", str(s.port)) or s.port)
+    s.api_key = _env("GROKTELE_API_KEY")
+    s.default_aspect = _env("GROKTELE_DEFAULT_ASPECT", s.default_aspect)
+    s.default_duration = int(_env("GROKTELE_DEFAULT_DURATION", str(s.default_duration)))
+    s.default_resolution = _env("GROKTELE_DEFAULT_RESOLUTION", s.default_resolution)
+    s.max_attempts = int(_env("GROKTELE_MAX_ATTEMPTS", str(s.max_attempts)))
+    s.video_timeout = float(_env("GROKTELE_VIDEO_TIMEOUT", str(s.video_timeout)))
+    s.accounts = load_accounts(s.accounts_file)
+    return s
+
+
+def load_accounts(path: Path) -> list[AccountConfig]:
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    if isinstance(raw, dict):
+        raw = raw.get("accounts") or []
+    out: list[AccountConfig] = []
+    for item in raw:
+        if not isinstance(item, dict) or not item.get("name") or not item.get("session"):
+            continue
+        out.append(
+            AccountConfig(
+                name=str(item["name"]).strip(),
+                session=str(item["session"]).strip(),
+                proxy=(str(item["proxy"]).strip() or None) if item.get("proxy") else None,
+                enabled=bool(item.get("enabled", True)),
+            )
+        )
+    return out
+
+
+def save_account(path: Path, account: AccountConfig) -> None:
+    """Thêm hoặc cập nhật tài khoản theo `name`, giữ nguyên các tài khoản khác."""
+    accounts = load_accounts(path)
+    accounts = [a for a in accounts if a.name != account.name] + [account]
+    data = [
+        {"name": a.name, "session": a.session, "proxy": a.proxy, "enabled": a.enabled}
+        for a in accounts
+    ]
+    path.write_text(
+        "# Session string = toàn quyền tài khoản Telegram. Không chia sẻ file này.\n"
+        + yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=10_000),
+        encoding="utf-8",
+    )
+
+
+def parse_proxy(url: Optional[str]) -> Optional[dict[str, Any]]:
+    """`socks5://user:pass@host:port` | `socks4://…` | `http://…` → dict proxy của Telethon."""
+    if not url:
+        return None
+    u = urlparse(url if "://" in url else f"socks5://{url}")
+    scheme = (u.scheme or "socks5").lower()
+    if scheme not in ("socks5", "socks4", "http"):
+        raise ValueError(f"Proxy không hỗ trợ: {scheme} (dùng socks5, socks4 hoặc http)")
+    if not u.hostname or not u.port:
+        raise ValueError(f"Proxy thiếu host hoặc port: {url}")
+    proxy: dict[str, Any] = {"proxy_type": scheme, "addr": u.hostname, "port": u.port, "rdns": True}
+    if u.username:
+        proxy["username"] = unquote(u.username)
+    if u.password:
+        proxy["password"] = unquote(u.password)
+    return proxy
