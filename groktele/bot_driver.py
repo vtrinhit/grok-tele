@@ -161,6 +161,22 @@ class JobResult:
 
 
 @dataclass
+class JobState:
+    """Driver ghi lại để worker biết job có để lại một render dở trên bot hay không.
+
+    render_baseline: id tin cuối trước khi gửi ảnh, có giá trị khi đã bấm "Tạo Video" (bot có thể đang render).
+    render_ended: bot đã trả video hoặc báo lỗi cho render đó → không còn gì về muộn.
+    """
+
+    render_baseline: Optional[int] = None
+    render_ended: bool = False
+
+    @property
+    def orphaned(self) -> bool:
+        return self.render_baseline is not None and not self.render_ended
+
+
+@dataclass
 class StatusInfo:
     active: Optional[bool]
     expires_at: Optional[str]
@@ -182,10 +198,11 @@ async def _no_delay() -> None:
 class _Waiter:
     """Đọc sự kiện từ chat, bỏ qua tin cũ hơn mốc, phát hiện tín hiệu chung (bảo trì, hết hạn...)."""
 
-    def __init__(self, chat: BotChat, baseline: int):
+    def __init__(self, chat: BotChat, baseline: int, state: Optional[JobState] = None):
         self.chat = chat
         self.baseline = baseline
         self.accepted = False
+        self.state = state
 
     async def wait(self, want: Callable[[BotMessage, Optional[str]], bool], timeout: float, what: str,
                    on_message: Optional[Callable[[BotMessage, Optional[str]], None]] = None) -> BotMessage:
@@ -214,6 +231,8 @@ class _Waiter:
             if cls == "reset":
                 raise BotMaintenance(f"Bot reset, cần gửi lại: {msg.text[:200]}", kind="reset")
             if cls == "error" and self.accepted and ev.kind == "new":
+                if self.state is not None:
+                    self.state.render_ended = True  # bot đã kết thúc render này bằng lỗi
                 raise RetryableError(f"Bot báo lỗi: {msg.text[:300]}", kind="unknown")
 
 
@@ -248,15 +267,20 @@ async def _ensure_option(chat: BotChat, options_id: int, kind: str, value: str, 
 
 
 async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, video_timeout: float = 900.0,
-                  on_stage: Optional[StageCallback] = None, delay: Optional[Delay] = None) -> JobResult:
-    """Chạy trọn 1 job trên 1 tài khoản. Raise DriverError (hoặc lỗi Telethon) khi thất bại."""
+                  on_stage: Optional[StageCallback] = None, delay: Optional[Delay] = None,
+                  state: Optional[JobState] = None) -> JobResult:
+    """Chạy trọn 1 job trên 1 tài khoản. Raise DriverError (hoặc lỗi Telethon) khi thất bại.
+
+    `state` cho worker biết job có để lại render dở không (khi bị huỷ / timeout / mất mạng sau khi bấm Tạo Video).
+    """
     stage = on_stage or (lambda s, p_: None)
     delay = delay or _no_delay
     output = Path(p.output_path)
+    state = state if state is not None else JobState()
 
     chat.drain_events()
     baseline = await chat.last_message_id()
-    waiter = _Waiter(chat, baseline)
+    waiter = _Waiter(chat, baseline, state)
 
     stage("upload", 0.0)
     if len(p.prompt) <= CAPTION_LIMIT:
@@ -279,6 +303,8 @@ async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, vide
     if not start:
         raise RetryableError("Không thấy nút Tạo Video")
     await delay()
+    # Từ đây bot có thể đang render: nếu job dừng giữa chừng, video sẽ về muộn.
+    state.render_baseline = baseline
     await chat.click(options.id, start[0], start[1])
 
     await waiter.wait(lambda m, c: c == "accepted", ui_timeout, "xác nhận 'Đã nhận yêu cầu'")
@@ -297,9 +323,29 @@ async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, vide
         stage("download", 0.92 + 0.08 * frac)
 
     size = await chat.download(video, output, _dl)
+    state.render_ended = True
     if size < MIN_VIDEO_BYTES:
         raise RetryableError(f"File video quá nhỏ ({size} bytes)")
     return JobResult(path=output, bytes=size, duration_ms=video.video_duration_ms)
+
+
+async def find_orphan_outcome(chat: BotChat, baseline: int) -> tuple[str, Optional[BotMessage]]:
+    """Render dở bắt đầu sau tin `baseline` đã có kết quả chưa (đọc lịch sử chat).
+
+    Trả về ("video", msg) khi video đã về, ("ended", None) khi bot báo lỗi / reset / hoàn thành mà không có video,
+    ("pending", None) khi còn đang render.
+    """
+    accepted = False
+    for msg in await chat.history_after(baseline):
+        if msg.has_video:
+            return "video", msg
+        cls = classify(msg.text)
+        if cls == "accepted":
+            accepted = True
+        elif cls == "reset" or (cls in ("done", "error") and accepted):
+            # "done"/lỗi chỉ tính khi sau "Đã nhận yêu cầu" của chính render này (tránh tin "done" của job trước).
+            return "ended", None
+    return "pending", None
 
 
 _EXPIRES_RE = re.compile(r"hết hạn lúc:\s*([0-9:]+\s+[0-9/]+)")

@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from groktele import __version__
-from groktele.config import RESOLUTION_MAP, VALID_ASPECTS, VALID_DURATIONS, Settings
+from groktele.config import ASPECT_MAP, RESOLUTION_MAP, VALID_DURATIONS, Settings
 from groktele.db import DB, TERMINAL, new_id
 from groktele.worker import Manager
 
@@ -147,9 +147,10 @@ def validate_job(body: Any, settings: Settings, index: Optional[int] = None) -> 
         image_path = None
         body = {**body, "_image_bytes": data, "_image_name": name}
 
-    aspect = str(body.get("aspectRatio") or settings.default_aspect)
-    if aspect not in VALID_ASPECTS:
-        raise _field_error("aspectRatio", f"bot chỉ hỗ trợ {', '.join(VALID_ASPECTS)}", index)
+    aspect_in = str(body.get("aspectRatio") or settings.default_aspect).strip()
+    aspect = ASPECT_MAP.get(aspect_in)
+    if aspect is None:
+        raise _field_error("aspectRatio", f"không hỗ trợ {aspect_in} (dùng {', '.join(ASPECT_MAP)})", index)
 
     raw_duration = body.get("duration", settings.default_duration)
     try:
@@ -267,6 +268,13 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
             output = str(folder / f"{stem}.mp4")
         return {"job_id": job_id, "image_path": image_path, "output_path": output}
 
+    def _normalize_account(v: dict) -> dict:
+        # accountId lạ (vd tên tài khoản MultiKit còn lưu trong ReelFB) → bỏ ghim thay vì từ chối job.
+        if v["account"] and v["account"] not in manager.workers:
+            log.warning("accountId '%s' không có trong GrokTele, bỏ qua (tự xoay tài khoản)", v["account"])
+            v["account"] = None
+        return v
+
     def _create(v: dict, batch_id: Optional[str] = None) -> tuple[dict, bool]:
         if v["client_ref"]:
             existing = db.find_active_by_client_ref(v["client_ref"])
@@ -284,7 +292,7 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
     @r.post("/jobs", status_code=202)
     async def create_job(request: Request) -> JSONResponse:
         body = await _json(request)
-        v = validate_job(body, settings)
+        v = _normalize_account(validate_job(body, settings))
         if not manager.usable_accounts(v["account"]):
             raise _no_account_error(v["account"])
         job, dedup = _create(v)
@@ -298,7 +306,8 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
         defaults = body.get("defaults") or {}
         if not isinstance(defaults, dict):
             raise ApiError(400, "invalid_input", "defaults: phải là object", {"field": "defaults"})
-        validated = [validate_job({**defaults, **(item if isinstance(item, dict) else {})}, settings, i)
+        validated = [_normalize_account(validate_job({**defaults, **(item if isinstance(item, dict) else {})},
+                                                     settings, i))
                      for i, item in enumerate(body["jobs"])]
         for i, v in enumerate(validated):
             if not manager.usable_accounts(v["account"]):

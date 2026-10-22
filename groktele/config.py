@@ -28,6 +28,12 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig", errors="replace")
 
 VALID_ASPECTS = ("9:16", "16:9")
+# Bot chỉ có nút Dọc 9:16 / Ngang 16:9 (video thực tế giữ tỷ lệ ảnh gốc). Tỷ lệ khác map về gần nhất.
+ASPECT_MAP = {
+    "9:16": "9:16", "16:9": "16:9",
+    "1:1": "9:16", "2:3": "9:16", "3:4": "9:16", "4:5": "9:16",
+    "3:2": "16:9", "4:3": "16:9", "21:9": "16:9",
+}
 VALID_DURATIONS = (6, 10, 15)
 # Bot chỉ có 720p và 1080p; 480p (mặc định MultiKit) được nâng lên 720p.
 RESOLUTION_MAP = {"480p": "720p", "720p": "720p", "1080p": "1080p"}
@@ -73,6 +79,9 @@ class Settings:
     network_cooldown: float = 30.0
     health_interval: float = 1800.0
     idle_poll: float = 1.0
+    orphan_grace: float = 600.0  # chờ tối đa video về muộn của job bị huỷ / timeout trước khi nhận job mới
+    orphan_poll: float = 5.0     # chu kỳ kiểm tra lịch sử chat khi đang chờ video về muộn
+    no_account_fail_check: float = 10.0  # chu kỳ fail job đang chờ khi không còn tài khoản dùng được
     action_delay: tuple[float, float] = (0.6, 1.5)
     upload_ttl_days: int = 7
     accounts: list[AccountConfig] = field(default_factory=list)

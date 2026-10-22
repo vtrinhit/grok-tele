@@ -87,11 +87,11 @@ ReelFB → Settings → Video → provider **MultiKit**:
 - URL: `http://127.0.0.1:8888`
 - API key: gõ bất kỳ (GrokTele không kiểm tra key trừ khi đặt `GROKTELE_API_KEY` trong `.env`)
 - Tỷ lệ: chỉ `9:16` hoặc `16:9`. Thời lượng: 6 / 10 / 15. Chất lượng: `720p` hoặc `1080p` (`480p` tự nâng lên 720p).
-- Client MultiKit của ReelFB hiện chỉ gửi `480p`/`720p`. Muốn 1080p qua ReelFB, thêm `"1080p"` vào
-  `_VALID_RESOLUTIONS` trong `backend/services/multikit.py` của ReelFB.
 - Bot giữ tỷ lệ theo ảnh gốc: ảnh vuông cho video vuông dù chọn 9:16. Muốn video dọc thì dùng ảnh dọc.
-- Lô lớn: ReelFB chờ mỗi job tối đa `video_multikit_timeout` (mặc định 3600s), tính cả thời gian xếp hàng.
-  Với 1 tài khoản, khoảng 35 job đầu xong kịp; lô lớn hơn thì tăng timeout hoặc thêm tài khoản.
+- Lô lớn: ReelFB chờ mỗi clip tối đa "Timeout mỗi clip" (`video_multikit_timeout`), tính cả thời gian xếp hàng.
+  Đặt **7200** trong ReelFB Settings. Số record song song bước 3 nên khoảng 2 × số tài khoản Telegram
+  (mỗi record gửi 2 clip cùng lúc, mỗi tài khoản làm ~35 clip/giờ).
+- Để trống "Tài khoản" (account) của MultiKit trong ReelFB, hoặc ghi đúng tên trong `accounts.yaml`.
 
 ## Lệnh hằng ngày
 
@@ -130,7 +130,12 @@ Log: `data\groktele.log`. Dữ liệu job: `data\groktele.db`.
 | Mất mạng | Tự kết nối lại |
 | Hết hạn gói | Tài khoản `expired`, job chuyển sang tài khoản khác. Gia hạn xong chạy `resume` |
 | Session bị đăng xuất | Tài khoản `dead`. Chạy lại `login` rồi khởi động lại server |
-| Tắt app giữa chừng | Mở lại, job dở được chạy lại |
+| Tắt app giữa chừng | Mở lại, job dở được chạy lại (hoặc nhận luôn video bot gửi muộn) |
+| Job bị huỷ / timeout khi bot đang render | Tài khoản chờ video về muộn đó (tối đa 10 phút) rồi mới nhận job mới, để video không bị gán nhầm job. Nếu job đang chờ thử lại thì dùng luôn video muộn đó |
+| Không còn tài khoản dùng được | Job đang chờ fail ngay với `no_account_available` (ReelFB không phải chờ hết timeout) |
+
+Tỷ lệ `1:1`, `2:3`, `3:4`, `4:5` được gửi bằng nút Dọc 9:16; `3:2`, `4:3`, `21:9` bằng nút Ngang 16:9.
+`accountId` không có trong GrokTele bị bỏ qua (tự xoay tài khoản).
 
 ## Khi bot đổi giao diện
 

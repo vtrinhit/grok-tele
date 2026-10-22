@@ -53,6 +53,7 @@ class FakeChat:
         self.sel = {"aspect": "9:16", "duration": "10", "res": "720p"}
         self._tasks: list[asyncio.Task] = []
         self._current: Optional[Scenario] = None
+        self.keep_rendering = False
         self._prompt = ""
 
     # ------------------------------------------------------------ helpers
@@ -60,11 +61,12 @@ class FakeChat:
         self.next_id += 1
         return self.next_id
 
-    def bot_says(self, text: str = "", buttons: Optional[list[list[str]]] = None, video: bool = False) -> BotMessage:
+    def bot_says(self, text: str = "", buttons: Optional[list[list[str]]] = None, video: bool = False,
+                 prompt: Optional[str] = None) -> BotMessage:
         m = BotMessage(id=self._id(), text=text, buttons=buttons or [], has_video=video,
                        video_duration_ms=10_000 if video else None)
         if video:
-            m.raw = self._prompt
+            m.raw = self._prompt if prompt is None else prompt
         self.messages[m.id] = m
         self.queue.put_nowait(ChatEvent("new", copy.deepcopy(m)))
         return m
@@ -153,6 +155,9 @@ class FakeChat:
         m = self.messages.get(msg_id)
         return copy.deepcopy(m) if m else None
 
+    async def history_after(self, min_id: int) -> list[BotMessage]:
+        return [copy.deepcopy(self.messages[i]) for i in sorted(self.messages) if i > min_id]
+
     async def click(self, msg_id: int, row: int, col: int) -> None:
         m = self.messages.get(msg_id)
         if m is None:
@@ -175,7 +180,8 @@ class FakeChat:
         self._edit(BotMessage(id=msg_id, text=self._options_text(), buttons=self._keyboard()))
 
     async def _render(self, sc: Scenario) -> None:
-        s = self.sel
+        s = dict(self.sel)
+        prompt = self._prompt  # video mang đúng prompt của lần render này, kể cả khi về muộn
         await asyncio.sleep(sc.step)
         self.bot_says(ACCEPTED.format(aspect=s["aspect"], duration=s["duration"], res=s["res"]))
         if sc.render == "silent":
@@ -195,7 +201,7 @@ class FakeChat:
             self.bot_says(RENDER_ERROR)
             return
         self._video_bytes = sc.video_bytes
-        self.bot_says(video=True)
+        self.bot_says(video=True, prompt=prompt)
         await asyncio.sleep(sc.step)
         self.bot_says(DONE)
 
@@ -211,5 +217,7 @@ class FakeChat:
 
     async def close(self) -> None:
         self.closed = True
+        if self.keep_rendering:
+            return  # bot thật vẫn render dù client ngắt kết nối
         for t in self._tasks:
             t.cancel()

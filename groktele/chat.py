@@ -37,6 +37,7 @@ class BotChat(Protocol):
     async def next_event(self, timeout: float) -> ChatEvent: ...
     def drain_events(self) -> None: ...
     async def get_message(self, msg_id: int) -> Optional[BotMessage]: ...
+    async def history_after(self, min_id: int) -> list[BotMessage]: ...
     async def click(self, msg_id: int, row: int, col: int) -> None: ...
     async def download(self, msg: BotMessage, path: Path,
                        progress: Optional[Callable[[float], None]] = None) -> int: ...
@@ -149,6 +150,11 @@ class TelethonChat:
     async def get_message(self, msg_id: int) -> Optional[BotMessage]:
         m = await self.client.get_messages(self.bot, ids=msg_id)
         return _to_bot_message(m) if m else None
+
+    async def history_after(self, min_id: int) -> list[BotMessage]:
+        """Tin của bot có id > min_id, cũ trước mới sau (đọc lịch sử, không phụ thuộc sự kiện đang chạy)."""
+        msgs = await self.client.get_messages(self.bot, min_id=int(min_id), limit=100)
+        return [_to_bot_message(m) for m in reversed(msgs) if not m.out]
 
     async def click(self, msg_id: int, row: int, col: int) -> None:
         from telethon.errors import BotResponseTimeoutError, MessageIdInvalidError

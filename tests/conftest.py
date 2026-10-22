@@ -21,6 +21,9 @@ def settings(tmp_path: Path) -> Settings:
     s.health_interval = 1000.0
     s.idle_poll = 0.02
     s.action_delay = (0.0, 0.0)
+    s.orphan_poll = 0.05
+    s.orphan_grace = 8.0
+    s.no_account_fail_check = 0.1
     s.accounts = [AccountConfig(name="acc1", session="fake")]
     return s
 

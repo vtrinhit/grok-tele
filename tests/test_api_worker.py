@@ -17,7 +17,8 @@ from groktele.db import DB
 
 class Factory:
     def __init__(self, scenarios: Optional[dict[str, list[Scenario]]] = None, status: str = "active",
-                 fail_connect: Optional[Exception] = None):
+                 fail_connect: Optional[Exception] = None, shared: Optional[FakeChat] = None):
+        self.shared = shared  # dùng chung 1 chat qua nhiều lần khởi động app (mô phỏng lịch sử Telegram)
         self.scenarios = scenarios or {}
         self.status = status
         self.fail_connect = fail_connect
@@ -26,6 +27,9 @@ class Factory:
     async def __call__(self, account: AccountConfig) -> FakeChat:
         if self.fail_connect:
             raise self.fail_connect
+        if self.shared is not None:
+            self.chats[account.name] = self.shared
+            return self.shared
         chat = FakeChat(self.scenarios.get(account.name), status=self.status, name=account.name)
         self.chats[account.name] = chat
         return chat
@@ -103,7 +107,7 @@ async def test_validation_errors(settings: Settings, image: Path) -> None:
             ({"imagePath": str(image)}, "prompt"),
             ({"prompt": "x"}, "imagePath"),
             ({"imagePath": "relative.png", "prompt": "x"}, "imagePath"),
-            ({"imagePath": str(image), "prompt": "x", "aspectRatio": "1:1"}, "aspectRatio"),
+            ({"imagePath": str(image), "prompt": "x", "aspectRatio": "5:7"}, "aspectRatio"),
             ({"imagePath": str(image), "prompt": "x", "duration": 7}, "duration"),
             ({"imagePath": str(image), "prompt": "x", "resolution": "4k"}, "resolution"),
             ({"imagePath": str(image), "prompt": "x", "outputPath": "C:/a.mov"}, "outputPath"),
@@ -204,6 +208,7 @@ async def test_dead_session(settings: Settings, image: Path) -> None:
 async def test_cancel_running_job(settings: Settings, image: Path) -> None:
     f = Factory({"acc1": [Scenario(render="silent"), Scenario()]})
     settings.video_timeout = 30
+    settings.orphan_grace = 0.5  # bot không bao giờ trả video của job bị huỷ → chỉ chờ ngắn rồi đi tiếp
     async with running(settings, f) as (client, _):
         jid = (await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": "p"})).json()["jobId"]
         await wait_status(client, jid, ("running",))

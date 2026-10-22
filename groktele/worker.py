@@ -6,13 +6,17 @@ import logging
 import time
 from typing import Awaitable, Callable, Optional
 
+from pathlib import Path
+
 from groktele.bot_driver import (
     AccountExpired,
     BotMaintenance,
     DriverError,
     JobParams,
+    JobState,
     RetryableError,
     check_status,
+    find_orphan_outcome,
     human_delay,
     run_job,
 )
@@ -167,11 +171,50 @@ class AccountWorker:
             if not await self._health_check():
                 return
 
+        if acc.get("orphan_job") and not await self._resolve_orphan(acc):
+            # Bot còn đang render job trước: chưa gửi job mới, kẻo video về muộn bị gán nhầm.
+            await asyncio.sleep(self.settings.orphan_poll)
+            return
+
         job = self.db.claim_job(self.name)
         if not job:
             await asyncio.sleep(self.settings.idle_poll)
             return
         await self._run_one(job)
+
+    async def _resolve_orphan(self, acc: dict) -> bool:
+        """True = render dở đã có kết quả (hoặc quá hạn chờ), tài khoản nhận job mới được."""
+        assert self.chat is not None
+        job_id, baseline = acc["orphan_job"], int(acc["orphan_baseline"] or 0)
+        outcome, video = await find_orphan_outcome(self.chat, baseline)
+        if outcome == "video" and video is not None:
+            job = self.db.get_job(job_id)
+            if job and self.db.claim_specific(job_id, self.name):
+                # Job vẫn đang chờ thử lại → dùng luôn video về muộn, không phải render lại.
+                try:
+                    size = await self.chat.download(video, Path(job["output_path"]))
+                    self.db.finish_success(job_id, result_bytes=size,
+                                           duration_ms=video.video_duration_ms or int(job["duration"]) * 1000)
+                    log.info("[%s] %s nhận video về muộn: %s (%d KB)", self.name, job_id, job["output_path"],
+                             size // 1024)
+                except Exception as exc:
+                    self.db.requeue(job_id, refund_attempt=True, kind="network", message=f"Tải video muộn lỗi: {exc}")
+                    log.warning("[%s] %s tải video về muộn lỗi, xếp lại: %s", self.name, job_id, exc)
+            else:
+                log.info("[%s] bỏ video về muộn của %s (job đã %s)", self.name, job_id,
+                         job["status"] if job else "không còn")
+            self.db.clear_orphan(self.name)
+            return True
+        if outcome == "ended":
+            log.info("[%s] render dở của %s đã kết thúc không có video", self.name, job_id)
+            self.db.clear_orphan(self.name)
+            return True
+        waited = time.time() - float(acc.get("orphan_since") or 0)
+        if waited >= self.settings.orphan_grace:
+            log.warning("[%s] chờ video về muộn của %s quá %ds, bỏ qua", self.name, job_id, int(waited))
+            self.db.clear_orphan(self.name)
+            return True
+        return False
 
     async def _connect(self) -> bool:
         self.db.set_account(self.name, status="connecting", reason="Đang kết nối Telegram")
@@ -238,10 +281,11 @@ class AccountWorker:
         def on_stage(stage: str, progress: float) -> None:
             self.db.set_progress(job_id, stage, progress)
 
+        state = JobState()
         self.current_job = job_id
         self.job_task = asyncio.create_task(
             run_job(self.chat, params, ui_timeout=self.settings.ui_timeout,
-                    video_timeout=self.settings.video_timeout, on_stage=on_stage, delay=self.delay)
+                    video_timeout=self.settings.video_timeout, on_stage=on_stage, delay=self.delay, state=state)
         )
         try:
             result = await self.job_task
@@ -261,6 +305,11 @@ class AccountWorker:
         finally:
             self.current_job = None
             self.job_task = None
+            if state.orphaned:
+                # Bot có thể vẫn đang render job này → không gửi job mới cho tới khi video đó về (hoặc quá hạn).
+                self.db.set_orphan(self.name, job_id, state.render_baseline)  # type: ignore[arg-type]
+                log.info("[%s] %s dừng khi bot đang render, chờ video về muộn trước khi nhận job mới",
+                         self.name, job_id)
 
         if self.db.finish_success(job_id, result_bytes=result.bytes,
                                   duration_ms=result.duration_ms or int(job["duration"]) * 1000):
@@ -328,9 +377,37 @@ class Manager:
             self.workers[acc.name] = w
             w.start()
         log.info("Khởi động %d worker: %s", len(self.workers), ", ".join(self.workers) or "(chưa có tài khoản)")
+        self._fail_task = asyncio.create_task(self._fail_unrunnable_loop(), name="fail-unrunnable")
 
     async def stop(self) -> None:
+        task = getattr(self, "_fail_task", None)
+        if task:
+            task.cancel()
         await asyncio.gather(*(w.stop() for w in self.workers.values()), return_exceptions=True)
+
+    def fail_unrunnable(self) -> int:
+        """Job đang chờ mà không tài khoản nào chạy được (hết hạn / dead / tạm dừng / tắt) → fail ngay,
+        giống MultiKit, để ReelFB không phải chờ tới hết timeout."""
+        failed = 0
+        for job in self.db.list_jobs(status="queued", limit=500):
+            if self.usable_accounts(job["pinned_account"]):
+                continue
+            states = ", ".join(f"{r['name']}={r['status']}" for r in self.db.list_accounts()
+                               if r["name"] in self.workers) or "chưa có tài khoản"
+            if self.db.finish_failed(job["id"], kind="no_account_available",
+                                     message=f"Không tài khoản nào chạy được ({states})"):
+                failed += 1
+        if failed:
+            log.warning("Fail %d job đang chờ: không còn tài khoản dùng được", failed)
+        return failed
+
+    async def _fail_unrunnable_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.settings.no_account_fail_check)
+            try:
+                self.fail_unrunnable()
+            except Exception as exc:  # pragma: no cover
+                log.exception("fail_unrunnable lỗi: %s", exc)
 
     def usable_accounts(self, pinned: Optional[str] = None) -> list[str]:
         out = []

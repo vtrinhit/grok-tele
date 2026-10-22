@@ -51,9 +51,17 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_check     TEXT,
     jobs_done      INTEGER NOT NULL DEFAULT 0,
     last_error     TEXT,
-    telegram_user  TEXT
+    telegram_user  TEXT,
+    orphan_job     TEXT,
+    orphan_baseline INTEGER,
+    orphan_since   REAL
 );
 """
+
+# Cột thêm sau bản đầu: DB cũ (đã chạy trên VPS) được ALTER khi mở.
+_MIGRATIONS = {
+    "accounts": {"orphan_job": "TEXT", "orphan_baseline": "INTEGER", "orphan_since": "REAL"},
+}
 
 
 def now_iso() -> str:
@@ -80,6 +88,15 @@ class DB:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        with self._lock:
+            for table, cols in _MIGRATIONS.items():
+                have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                for col, typ in cols.items():
+                    if col not in have:
+                        self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
 
     def close(self) -> None:
         with self._lock:
@@ -170,6 +187,21 @@ class DB:
                 self._conn.execute("ROLLBACK")
                 raise
         return self.get_job(row["id"]) if row else None
+
+    def claim_specific(self, job_id: str, account: str) -> bool:
+        """Nhận đúng 1 job đang queued (dùng khi video về muộn của chính job đó tới nơi). Không tính thêm lượt."""
+        return self._exec(
+            """UPDATE jobs SET status = 'running', account = ?, stage = 'download', progress = 0.92,
+                      started_at = COALESCE(started_at, ?), error_kind = NULL, error_message = NULL
+               WHERE id = ? AND status = 'queued'""",
+            (account, now_iso(), job_id),
+        ) > 0
+
+    def set_orphan(self, account: str, job_id: str, baseline: int) -> None:
+        self.set_account(account, orphan_job=job_id, orphan_baseline=int(baseline), orphan_since=time.time())
+
+    def clear_orphan(self, account: str) -> None:
+        self.set_account(account, orphan_job=None, orphan_baseline=None, orphan_since=None)
 
     def set_progress(self, job_id: str, stage: str, progress: float) -> None:
         self._exec("UPDATE jobs SET stage = ?, progress = ? WHERE id = ? AND status = 'running'",
