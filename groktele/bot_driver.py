@@ -82,7 +82,10 @@ _MAINTENANCE = ("bảo trì", "đóng bot", "tạm đóng", "tạm dừng hoạt
 _RESET = ("reset mạng", "gửi lại giúp", "tác vụ chưa hoàn thành")
 _EXPIRED = ("zalo", "hết lượt", "đã hết hạn", "hết hạn sử dụng", "video thử thành công", "vui lòng gia hạn",
             "chưa gia hạn", "không còn lượt")
-_ERROR = ("lỗi", "thất bại", "không thể tạo", "không tạo được", "failed", "error", "vi phạm", "kiểm duyệt")
+_ERROR = ("lỗi", "thất bại", "không thể tạo", "không tạo được", "failed", "error", "vi phạm", "kiểm duyệt",
+          # "⚠️ Không hoàn tất tác vụ (loi tai file video: context deadline exceeded). Bạn hãy gửi lại ảnh..."
+          # — bot viết "loi" không dấu.
+          "không hoàn tất", "loi tai", "deadline exceeded", "timeout")
 
 
 def classify(text: str) -> Optional[str]:

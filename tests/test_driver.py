@@ -9,6 +9,7 @@ from groktele.bot_driver import (
     AccountExpired,
     BotMaintenance,
     JobParams,
+    JobState,
     RetryableError,
     check_status,
     classify,
@@ -35,6 +36,8 @@ REAL_TEXTS = {
     "❗Bot vừa phải reset mạng do VPS chập chờn, những tác vụ chưa hoàn thành bạn vui lòng gửi lại giúp bot nhé ạ.": "reset",
     EXPIRED: "expired",
     RENDER_ERROR: "error",
+    "⚠️ Không hoàn tất tác vụ (loi tai file video: context deadline exceeded). Bạn hãy gửi lại ảnh và prompt "
+    "để tạo lại nhé! Mã: c188d4f8": "error",
     "🌸 Chào mừng bạn đến với Bot Tạo Video AI Grok! 🎬✨\n\n🎁 Quà tặng trải nghiệm miễn phí:\n- 01 lượt Tạo Video AI": None,
     "💌Hello anh em, bot đã cập nhật thêm chức năng tạo ảnh và chức năng nối dài video": None,
     "🆔 ID Telegram của bạn: 1790523934": None,
@@ -196,3 +199,24 @@ async def test_find_orphan_outcome_after_cancel(image: Path, tmp_path: Path) -> 
     m.ts = t + 30
     chat.messages[m.id] = m
     assert (await find_orphan_outcome(chat, base, cancel_at=t, cancel_quiet=60, now=t + 61))[0] == "pending"
+
+
+async def test_bot_incomplete_task_retries_at_once(image: Path, tmp_path: Path) -> None:
+    # Bot báo "Không hoàn tất tác vụ" ngay sau khi nhận yêu cầu → thử lại ngay, không chờ hết timeout video.
+    import time
+
+    import fake_bot
+
+    old = fake_bot.RENDER_ERROR
+    fake_bot.RENDER_ERROR = ("⚠️ Không hoàn tất tác vụ (loi tai file video: context deadline exceeded). "
+                             "Bạn hãy gửi lại ảnh và prompt để tạo lại nhé! Mã: c188d4f8")
+    try:
+        chat = FakeChat([Scenario(render="error")])
+        state = JobState()
+        t0 = time.monotonic()
+        with pytest.raises(RetryableError) as ei:
+            await run_job(chat, _params(image, tmp_path), ui_timeout=2, video_timeout=30, state=state)
+        assert time.monotonic() - t0 < 5 and ei.value.kind == "unknown"
+        assert state.render_ended  # bot đã tự kết thúc → không /cancel, không chờ video về muộn
+    finally:
+        fake_bot.RENDER_ERROR = old
