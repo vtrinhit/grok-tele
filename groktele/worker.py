@@ -71,7 +71,7 @@ class AccountWorker:
     def _set(self, status: str, reason: Optional[str] = None, cooldown: float = 0.0, **extra) -> None:
         until = time.time() + cooldown if cooldown else None
         self.db.set_account(self.name, status=status, reason=reason, cooldown_until=until, **extra)
-        if status != "active":
+        if status not in ("active", "connecting"):
             log.warning("[%s] -> %s%s", self.name, status, f": {reason}" if reason else "")
 
     def _cooldown(self, seconds: float, reason: str) -> None:

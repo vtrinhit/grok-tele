@@ -167,7 +167,13 @@ class TelethonChat:
             if progress and total:
                 progress(done / total)
 
-        await self.client.download_media(msg.raw, file=str(tmp), progress_callback=_cb)
+        doc = getattr(msg.raw, "document", None)
+        if doc is not None:
+            # Gói 512 KB (mặc định Telethon 128 KB) → ít vòng gọi hơn, tải nhanh hơn nhiều.
+            await self.client.download_file(doc, str(tmp), part_size_kb=512, file_size=doc.size,
+                                            progress_callback=_cb)
+        else:
+            await self.client.download_media(msg.raw, file=str(tmp), progress_callback=_cb)
         os.replace(tmp, path)
         return path.stat().st_size
 

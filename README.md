@@ -5,7 +5,21 @@ Mỗi tài khoản Telegram là 1 luồng (~2 phút/video → ~25 video/giờ/t�
 
 API **giống hệt MultiKit Grok**, nên ReelFB Studio dùng ngay provider `multikit` có sẵn, chỉ đổi URL.
 
-## Cài đặt lần đầu
+## Script nhanh (nháy đúp)
+
+| File | Việc |
+|---|---|
+| `setup.bat` | Cài lần đầu: tạo `.venv`, cài thư viện, tạo `.env` và mở để điền |
+| `login.bat` | Thêm 1 tài khoản Telegram (hỏi tên, proxy, rồi số điện thoại + mã OTP) |
+| `start.bat` | Chạy server có cửa sổ, tự khởi động lại nếu bị tắt |
+| `start-hidden.vbs` | Chạy server ẩn, không có cửa sổ |
+| `stop.bat` | Dừng server (cả bản chạy ẩn) |
+| `status.bat` | Xem tài khoản, hạn dùng, thống kê job |
+| `install-autostart.bat` | Tự chạy ẩn mỗi khi đăng nhập Windows (`install-autostart.bat remove` để gỡ) |
+
+Bắt đầu nhanh: `setup.bat` → điền `.env` → `login.bat` → `start.bat`.
+
+## Cài đặt lần đầu (thủ công)
 
 ```bat
 cd D:\MMO\GrokTele
@@ -37,7 +51,7 @@ Tài khoản phải còn hạn gói của bot (`/status` trong bot báo "Còn h�
 
 ## Chạy server
 
-Nháy đúp `run.bat` (tự khởi động lại nếu bị tắt), hoặc:
+Nháy đúp `start.bat` (tự khởi động lại nếu bị tắt), hoặc:
 
 ```bat
 .venv\Scripts\python -m groktele serve
@@ -45,8 +59,7 @@ Nháy đúp `run.bat` (tự khởi động lại nếu bị tắt), hoặc:
 
 Nghe tại `http://127.0.0.1:17891`. Tài liệu API tương tác: `http://127.0.0.1:17891/docs`.
 
-Tự chạy khi bật máy: Task Scheduler → Create Task → Trigger "At log on" → Action "Start a program" =
-`D:\MMO\GrokTele\run.bat`, Start in = `D:\MMO\GrokTele`.
+Tự chạy khi bật máy: nháy đúp `install-autostart.bat`.
 
 ## Nối ReelFB Studio
 

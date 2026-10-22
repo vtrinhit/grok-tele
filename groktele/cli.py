@@ -110,10 +110,10 @@ async def _try(settings: Settings, name: str, image: str, prompt: str, aspect: s
         last = [""]
 
         def on_stage(stage: str, p: float) -> None:
-            line = f"  {time.time() - t0:6.1f}s  {stage:<9} {p * 100:5.1f}%"
-            if line[10:] != last[0]:
-                last[0] = line[10:]
-                print(line)
+            key = f"{stage} {int(p * 20)}"  # in mỗi 5%
+            if key != last[0]:
+                last[0] = key
+                print(f"  {time.time() - t0:6.1f}s  {stage:<9} {p * 100:5.1f}%")
 
         result = await run_job(
             chat,
