@@ -238,8 +238,8 @@ class _Waiter:
             if cls == "reset":
                 raise BotMaintenance(f"Bot reset, cần gửi lại: {msg.text[:200]}", kind="reset")
             if cls == "error" and self.accepted and ev.kind == "new":
-                if self.state is not None:
-                    self.state.render_ended = True  # bot đã kết thúc render này bằng lỗi
+                # KHÔNG coi là render đã dừng: thực tế bot báo "Không hoàn tất tác vụ" rồi vài phút sau vẫn
+                # hiện "Đang tạo video 99%". Worker sẽ /cancel và chờ render dở trước khi gửi job mới.
                 raise RetryableError(f"Bot báo lỗi: {msg.text[:300]}", kind="unknown")
 
 
@@ -358,8 +358,9 @@ async def find_orphan_outcome(chat: BotChat, baseline: int, cancel_at: Optional[
         cls = classify(msg.text)
         if cls == "accepted":
             accepted = True
-        elif cls == "reset" or (cls in ("done", "error") and accepted):
-            # "done"/lỗi chỉ tính khi sau "Đã nhận yêu cầu" của chính render này (tránh tin "done" của job trước).
+        elif cls == "reset" or (cls == "done" and accepted):
+            # "done" chỉ tính khi sau "Đã nhận yêu cầu" của chính render này (tránh tin "done" của job trước).
+            # Tin lỗi của bot KHÔNG tính: bot có thể báo lỗi rồi vẫn render tiếp và gửi video.
             return "ended", None
         if cancel_at is not None and cls == "progress" and msg.ts > cancel_at + 3:
             alive_after_cancel = True  # bot vẫn cập nhật % sau /cancel → render chưa bị huỷ

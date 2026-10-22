@@ -271,3 +271,29 @@ async def test_io_timeout_raises_stall() -> None:
             await _io(asyncio.sleep(5), "read", "test")
     finally:
         IO_TIMEOUT["read"] = old
+
+
+async def test_bot_error_then_still_renders_is_cancelled(settings: Settings, image: Path, tmp_path: Path) -> None:
+    # Bot báo "Không hoàn tất tác vụ" rồi vẫn render: tool phải /cancel trước khi tạo lại,
+    # và video của render bị lỗi (nếu vẫn về) không được lọt sang job khác.
+    import fake_bot
+
+    settings.ui_timeout = 5
+    settings.video_timeout = 30
+    old = fake_bot.RENDER_ERROR
+    fake_bot.RENDER_ERROR = ("⚠️ Không hoàn tất tác vụ (loi tai file video: context deadline exceeded). "
+                             "Bạn hãy gửi lại ảnh và prompt để tạo lại nhé! Mã: c188d4f8")
+    f = Factory({"acc1": [Scenario(render="error"), Scenario(step=0.05), Scenario(step=0.05)]})
+    try:
+        async with running(settings, f) as (client, db):
+            a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+            b = (await _post(client, image, "JOB-B", tmp_path / "b.mp4")).json()["jobId"]
+            ja = await wait_status(client, a, ("succeeded", "failed"), timeout=20)
+            jb = await wait_status(client, b, ("succeeded", "failed"), timeout=20)
+            assert ja["status"] == jb["status"] == "succeeded"
+            assert ja["attempts"] == 2
+            assert (tmp_path / "a.mp4").read_bytes().startswith(b"VIDEO:JOB-A|")
+            assert (tmp_path / "b.mp4").read_bytes().startswith(b"VIDEO:JOB-B|")
+            assert "/cancel" in f.chats["acc1"].texts
+    finally:
+        fake_bot.RENDER_ERROR = old

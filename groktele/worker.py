@@ -319,7 +319,8 @@ class AccountWorker:
             self._handle_failure(job, exc)
             if isinstance(exc, NETWORK_ERRORS):
                 await self._drop_chat()
-            elif isinstance(exc, RetryableError) and exc.kind == "timeout":
+            elif isinstance(exc, RetryableError):
+                # Timeout hoặc bot báo lỗi khi đã bấm Tạo Video: render có thể vẫn chạy → /cancel rồi mới tạo lại.
                 send_cancel_cmd = True
             return
         finally:

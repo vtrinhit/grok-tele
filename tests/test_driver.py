@@ -217,6 +217,6 @@ async def test_bot_incomplete_task_retries_at_once(image: Path, tmp_path: Path) 
         with pytest.raises(RetryableError) as ei:
             await run_job(chat, _params(image, tmp_path), ui_timeout=2, video_timeout=30, state=state)
         assert time.monotonic() - t0 < 5 and ei.value.kind == "unknown"
-        assert state.render_ended  # bot đã tự kết thúc → không /cancel, không chờ video về muộn
+        assert state.orphaned  # bot báo lỗi nhưng có thể vẫn render → worker phải /cancel
     finally:
         fake_bot.RENDER_ERROR = old
