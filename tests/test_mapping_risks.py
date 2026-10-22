@@ -9,6 +9,8 @@ import contextlib
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from fake_bot import FakeChat, Scenario
 from test_api_worker import Factory, running, wait_account, wait_status
 from groktele.config import AccountConfig, Settings
@@ -236,3 +238,36 @@ async def test_hard_kill_then_restart_uses_late_video(settings: Settings, image:
         assert done["status"] == "succeeded"
         assert (tmp_path / "a.mp4").read_bytes().startswith(b"VIDEO:JOB-A|")
         assert len(chat.photos) == 1  # không gửi ảnh lần 2
+
+
+async def test_stalled_telegram_call_never_hangs_the_job(settings: Settings, image: Path, tmp_path: Path) -> None:
+    # Tải video bị treo (kết nối chết lửng): job vẫn phải kết thúc, ReelFB nhận được trạng thái cuối.
+    from groktele import chat as chat_mod
+
+    async def hang(self, msg, path, progress=None):  # noqa: ANN001
+        await asyncio.sleep(3600)
+
+    settings.max_attempts = 1
+    settings.ui_timeout = 2
+    settings.video_timeout = 2
+    settings.job_overhead = 1  # hạn chót tổng = 2*3 + 2 + 1 = 9s
+    f = Factory({"acc1": [Scenario()]})
+    FakeChat.download, orig = hang, FakeChat.download
+    try:
+        async with running(settings, f) as (client, _):
+            a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+            job = await wait_status(client, a, ("succeeded", "failed"), timeout=20)
+            assert job["status"] == "failed" and job["error"]["kind"] == "timeout", job
+    finally:
+        FakeChat.download = orig
+
+
+async def test_io_timeout_raises_stall() -> None:
+    from groktele.chat import IO_TIMEOUT, TelegramStall, _io
+
+    IO_TIMEOUT["read"], old = 0.05, IO_TIMEOUT["read"]
+    try:
+        with pytest.raises(TelegramStall):
+            await _io(asyncio.sleep(5), "read", "test")
+    finally:
+        IO_TIMEOUT["read"] = old

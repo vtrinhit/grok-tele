@@ -298,7 +298,12 @@ class AccountWorker:
                     video_timeout=self.settings.video_timeout, on_stage=on_stage, delay=self.delay, state=state)
         )
         try:
-            result = await self.job_task
+            try:
+                # Hạn chót tổng: dù lệnh nào bị kẹt, job luôn kết thúc để ReelFB nhận được kết quả.
+                # wait_for tự huỷ job_task khi quá hạn.
+                result = await asyncio.wait_for(self.job_task, timeout=self._job_deadline())
+            except asyncio.TimeoutError:
+                raise RetryableError(f"Job vượt hạn chót {int(self._job_deadline())}s", kind="timeout") from None
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling():
@@ -337,6 +342,11 @@ class AccountWorker:
             log.info("[%s] %s xong: %s (%d KB)", self.name, job_id, result.path, result.bytes // 1024)
         else:
             log.info("[%s] %s xong nhưng job đã bị huỷ, bỏ kết quả", self.name, job_id)
+
+    def _job_deadline(self) -> float:
+        s = self.settings
+        # 2 lần chờ UI + chờ video + upload/download/bấm nút (có hạn riêng trong chat.py) + biên an toàn.
+        return s.ui_timeout * 3 + s.video_timeout + s.job_overhead
 
     async def _cancel_render(self, job_id: str) -> None:
         assert self.chat is not None

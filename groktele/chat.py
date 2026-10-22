@@ -49,6 +49,21 @@ class AuthRequired(Exception):
     """Session không còn hợp lệ, cần chạy lại `login`."""
 
 
+class TelegramStall(ConnectionError):
+    """Một lệnh Telegram không trả lời trong thời hạn (kết nối chết lửng). Worker coi như mất mạng: kết nối lại."""
+
+
+# Hạn cho từng loại lệnh Telegram (giây). Không có hạn thì 1 kết nối chết lửng làm job đứng mãi.
+IO_TIMEOUT = {"read": 30.0, "send": 30.0, "upload": 180.0, "download": 600.0, "connect": 60.0}
+
+
+async def _io(awaitable: Any, kind: str, what: str) -> Any:
+    try:
+        return await asyncio.wait_for(awaitable, timeout=IO_TIMEOUT[kind])
+    except asyncio.TimeoutError as exc:
+        raise TelegramStall(f"Telegram không phản hồi sau {int(IO_TIMEOUT[kind])}s khi {what}") from exc
+
+
 def _to_bot_message(m: Any) -> BotMessage:
     video = getattr(m, "video", None)
     doc = getattr(m, "document", None)
@@ -104,10 +119,10 @@ class TelethonChat:
             auto_reconnect=True,
         )
         try:
-            await client.connect()
-            if not await client.is_user_authorized():
+            await _io(client.connect(), "connect", "kết nối")
+            if not await _io(client.is_user_authorized(), "read", "kiểm tra đăng nhập"):
                 raise AuthRequired("Session không hợp lệ hoặc đã bị đăng xuất, chạy lại: python -m groktele login <tên>")
-            entity = await client.get_entity(bot)
+            entity = await _io(client.get_entity(bot), "read", "tìm bot")
         except BaseException:
             # Không để lại kết nối treo khi thử lại nhiều lần.
             try:
@@ -118,7 +133,7 @@ class TelethonChat:
         return cls(client, entity)
 
     async def me(self) -> str:
-        me = await self.client.get_me()
+        me = await _io(self.client.get_me(), "read", "đọc thông tin tài khoản")
         name = " ".join(x for x in (me.first_name, me.last_name) if x)
         return f"{name} (@{me.username}, id {me.id})" if me.username else f"{name} (id {me.id})"
 
@@ -132,15 +147,16 @@ class TelethonChat:
         return bool(self.client.is_connected())
 
     async def last_message_id(self) -> int:
-        msgs = await self.client.get_messages(self.bot, limit=1)
+        msgs = await _io(self.client.get_messages(self.bot, limit=1), "read", "đọc tin cuối")
         return int(msgs[0].id) if msgs else 0
 
     async def send_photo(self, path: str, caption: str) -> int:
-        m = await self.client.send_file(self.bot, path, caption=caption, force_document=False)
+        m = await _io(self.client.send_file(self.bot, path, caption=caption, force_document=False),
+                      "upload", "gửi ảnh")
         return int(m.id)
 
     async def send_text(self, text: str) -> int:
-        m = await self.client.send_message(self.bot, text)
+        m = await _io(self.client.send_message(self.bot, text), "send", "gửi tin nhắn")
         return int(m.id)
 
     async def next_event(self, timeout: float) -> ChatEvent:
@@ -151,18 +167,18 @@ class TelethonChat:
             self._queue.get_nowait()
 
     async def get_message(self, msg_id: int) -> Optional[BotMessage]:
-        m = await self.client.get_messages(self.bot, ids=msg_id)
+        m = await _io(self.client.get_messages(self.bot, ids=msg_id), "read", "đọc tin")
         return _to_bot_message(m) if m else None
 
     async def history_after(self, min_id: int) -> list[BotMessage]:
         """Tin của bot có id > min_id, cũ trước mới sau (đọc lịch sử, không phụ thuộc sự kiện đang chạy)."""
-        msgs = await self.client.get_messages(self.bot, min_id=int(min_id), limit=100)
+        msgs = await _io(self.client.get_messages(self.bot, min_id=int(min_id), limit=100), "read", "đọc lịch sử")
         return [_to_bot_message(m) for m in reversed(msgs) if not m.out]
 
     async def click(self, msg_id: int, row: int, col: int) -> None:
         from telethon.errors import BotResponseTimeoutError, MessageIdInvalidError
 
-        m = await self.client.get_messages(self.bot, ids=msg_id)
+        m = await _io(self.client.get_messages(self.bot, ids=msg_id), "read", "đọc bảng tuỳ chọn")
         if not m:
             raise LookupError(f"Tin {msg_id} không còn (bot đã xoá)")
         try:
@@ -186,10 +202,11 @@ class TelethonChat:
         doc = getattr(msg.raw, "document", None)
         if doc is not None:
             # Gói 512 KB (mặc định Telethon 128 KB) → ít vòng gọi hơn, tải nhanh hơn nhiều.
-            await self.client.download_file(doc, str(tmp), part_size_kb=512, file_size=doc.size,
-                                            progress_callback=_cb)
+            await _io(self.client.download_file(doc, str(tmp), part_size_kb=512, file_size=doc.size,
+                                                progress_callback=_cb), "download", "tải video")
         else:
-            await self.client.download_media(msg.raw, file=str(tmp), progress_callback=_cb)
+            await _io(self.client.download_media(msg.raw, file=str(tmp), progress_callback=_cb),
+                      "download", "tải video")
         os.replace(tmp, path)
         return path.stat().st_size
 
@@ -197,6 +214,6 @@ class TelethonChat:
         for handler, ev in self._handlers:
             self.client.remove_event_handler(handler, ev)
         try:
-            await self.client.disconnect()
+            await asyncio.wait_for(self.client.disconnect(), timeout=10)
         except Exception:  # pragma: no cover - best effort
             pass

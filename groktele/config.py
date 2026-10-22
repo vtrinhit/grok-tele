@@ -78,6 +78,7 @@ class Settings:
     # Sau /cancel, không thấy dấu hiệu render (video, tin % được cập nhật) trong ngần này giây → coi như đã huỷ.
     # Nếu /cancel không dừng được render thì video muộn có thể lọt sang job sau → khi đó tăng lên 60 (.env).
     cancel_quiet: float = 20.0
+    job_overhead: float = 900.0  # thêm vào hạn chót tổng mỗi job (upload, download, bấm nút)
     maintenance_cooldown: float = 300.0
     network_cooldown: float = 30.0
     health_interval: float = 1800.0
