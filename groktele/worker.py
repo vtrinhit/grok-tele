@@ -26,7 +26,7 @@ from groktele import disk
 from groktele.chat import AuthRequired, BotChat
 from groktele.config import AccountConfig, Settings
 from groktele.disk import is_disk_full
-from groktele.db import DB, USABLE_STATUSES, now_iso
+from groktele.db import DB, USABLE_STATUSES, now_iso, parse_iso
 
 log = logging.getLogger("groktele.worker")
 
@@ -456,9 +456,11 @@ class Manager:
         self.workers: dict[str, AccountWorker] = {}
 
     async def start(self) -> None:
+        self.started_at = time.time()
         n = self.db.reset_running()
         if n:
-            log.info("Đưa %d job chạy dở về hàng đợi", n)
+            log.info("Đưa %d job chạy dở về hàng đợi (job nào ReelFB không còn hỏi tới sẽ tự huỷ sau %ds)",
+                     n, int(self.settings.abandon_after))
         names = {a.name for a in self.settings.accounts}
         for row in self.db.list_accounts():
             if row["name"] not in names:
@@ -497,6 +499,7 @@ class Manager:
             await asyncio.sleep(self.settings.no_account_fail_check)
             try:
                 self.fail_unrunnable()
+                self.cancel_abandoned()
             except Exception as exc:  # pragma: no cover
                 if not is_disk_full(exc):  # ổ đầy: worker đã báo, đừng spam log mỗi 10s
                     log.exception("fail_unrunnable lỗi: %s", exc)
@@ -512,12 +515,43 @@ class Manager:
                 out.append(row["name"])
         return out
 
-    def cancel(self, job_id: str) -> bool:
-        if not self.db.cancel(job_id):
+    def cancel(self, job_id: str, kind: str = "cancelled", message: str = "Đã huỷ") -> bool:
+        if not self.db.cancel(job_id, kind=kind, message=message):
             return False
         for w in self.workers.values():
-            w.cancel_job(job_id)
+            w.cancel_job(job_id)  # job đang chạy → huỷ task → worker gửi /cancel cho bot
         return True
+
+    def cancel_all(self) -> int:
+        n = sum(1 for job in self.db.active_jobs()
+                if self.cancel(job["id"], message="Huỷ toàn bộ hàng đợi (cancel-all)"))
+        if n:
+            log.warning("Huỷ toàn bộ: %d job", n)
+        return n
+
+    def cancel_abandoned(self, now: Optional[float] = None) -> int:
+        """Huỷ job không còn client nào hỏi trạng thái (vd ReelFB đã bỏ cuộc lúc GrokTele chết).
+
+        Mốc tính = lần hỏi gần nhất, hoặc lúc tạo job, hoặc lúc GrokTele khởi động (lấy mốc muộn nhất),
+        để client kịp hỏi lại sau khi GrokTele vừa bật lại.
+        """
+        limit = self.settings.abandon_after
+        if limit <= 0:
+            return 0
+        now = now if now is not None else time.time()
+        started = getattr(self, "started_at", now)
+        n = 0
+        for job in self.db.active_jobs():
+            created = parse_iso(job["created_at"]).timestamp()
+            last_seen = max(job.get("last_polled_at") or 0, created, started)
+            if now - last_seen < limit:
+                continue
+            idle = int(now - last_seen)
+            if self.cancel(job["id"], kind="abandoned",
+                           message=f"Không còn ai theo dõi job này ({idle}s không được hỏi trạng thái), tự huỷ"):
+                n += 1
+                log.warning("Huỷ %s: %ds không ai hỏi trạng thái (client đã bỏ job)", job["id"], idle)
+        return n
 
     def resume(self, name: str) -> bool:
         if name not in self.workers or not self.workers[name].account.enabled:

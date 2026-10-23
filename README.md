@@ -16,6 +16,7 @@ API **giống hệt MultiKit Grok**, nên ReelFB Studio dùng ngay provider `mul
 | `06.stop.bat` | Dừng server (cả bản chạy ẩn) |
 | `05.status.bat` | Xem tài khoản, hạn dùng, thống kê job |
 | `07.install-autostart.bat` | Tự chạy ẩn mỗi khi đăng nhập Windows (`07.install-autostart.bat remove` để gỡ) |
+| `08.cancel-all.bat` | Huỷ mọi job đang chờ / đang chạy |
 
 Bắt đầu nhanh: `01.setup.bat` → điền `.env` → `02.login.bat` → `03.start.bat`.
 
@@ -133,6 +134,7 @@ Log: `data\groktele.log`. Dữ liệu job: `data\groktele.db`.
 | Session bị đăng xuất | Tài khoản `dead`. Chạy lại `login` rồi khởi động lại server |
 | Tắt app giữa chừng | Mở lại, job dở được chạy lại (hoặc nhận luôn video bot gửi muộn) |
 | ReelFB huỷ job khi bot đang render | Gửi `/cancel`. Bot xác nhận và 20s không còn dấu hiệu render (`GROKTELE_CANCEL_QUIET`) thì nhận job mới; nếu bot vẫn render thì chờ video đó (tối đa 10 phút) và bỏ đi, để video không bị gán nhầm job |
+| ReelFB bỏ job (vd GrokTele chết, ReelFB báo lỗi clip rồi đi tiếp) | Job 5 phút không ai hỏi trạng thái (`GROKTELE_ABANDON_AFTER`) thì tự huỷ, đang render thì `/cancel`. Huỷ ngay toàn bộ: `08.cancel-all.bat` |
 | Ổ đĩa sắp đầy | Ổ chứa file kết quả còn dưới 1 GB (`GROKTELE_MIN_FREE_MB`): job fail ngay với `disk_full`, không gửi ảnh cho bot; job mới bị từ chối với mã `507`. Ổ đầy giữa lúc tải: fail ngay, xoá file dở. Ổ chứa `data` còn dưới 100 MB: tạm dừng nhận job. Dung lượng trống hiện trong `05.status.bat` |
 | Bấm chuột vào cửa sổ `03.start.bat` | Không còn làm server đứng: app tự tắt QuickEdit của cửa sổ khi khởi động |
 | Gói của bot còn dưới 24 giờ | Cảnh báo trong log, `05.status.bat` và `GET /grok/accounts` (`expiresInHours`) |

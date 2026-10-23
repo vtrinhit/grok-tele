@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 _MIGRATIONS = {
     "accounts": {"orphan_job": "TEXT", "orphan_baseline": "INTEGER", "orphan_since": "REAL",
                  "orphan_cancel_at": "REAL"},
+    "jobs": {"last_polled_at": "REAL"},
 }
 
 
@@ -206,6 +207,14 @@ class DB:
     def clear_orphan(self, account: str) -> None:
         self.set_account(account, orphan_job=None, orphan_baseline=None, orphan_since=None, orphan_cancel_at=None)
 
+    def touch_job(self, job_id: str) -> None:
+        """Client (ReelFB) vừa hỏi trạng thái job → job vẫn còn người chờ."""
+        self._exec("UPDATE jobs SET last_polled_at = ? WHERE id = ? AND status IN ('queued', 'running')",
+                   (time.time(), job_id))
+
+    def active_jobs(self) -> list[dict]:
+        return self._all("SELECT * FROM jobs WHERE status IN ('queued', 'running') ORDER BY seq")
+
     def set_progress(self, job_id: str, stage: str, progress: float) -> None:
         self._exec("UPDATE jobs SET stage = ?, progress = ? WHERE id = ? AND status = 'running'",
                    (stage, max(0.0, min(1.0, float(progress))), job_id))
@@ -241,12 +250,11 @@ class DB:
             (kind, message, now_iso(), job_id),
         ) > 0
 
-    def cancel(self, job_id: str) -> bool:
+    def cancel(self, job_id: str, kind: str = "cancelled", message: str = "Đã huỷ") -> bool:
         return self._exec(
-            """UPDATE jobs SET status = 'cancelled', error_kind = 'cancelled', error_message = 'Đã huỷ',
-                      finished_at = ?
+            """UPDATE jobs SET status = 'cancelled', error_kind = ?, error_message = ?, finished_at = ?
                WHERE id = ? AND status IN ('queued', 'running')""",
-            (now_iso(), job_id),
+            (kind, message, now_iso(), job_id),
         ) > 0
 
     def retry(self, job_id: str) -> bool:

@@ -88,6 +88,9 @@ class Settings:
     no_account_fail_check: float = 10.0  # chu kỳ fail job đang chờ khi không còn tài khoản dùng được
     action_delay: tuple[float, float] = (0.6, 1.5)
     upload_ttl_days: int = 7
+    # Job không được client hỏi trạng thái trong ngần này giây → coi như bị bỏ (vd ReelFB đã bỏ cuộc khi GrokTele
+    # chết) → tự huỷ, không render cho không ai. ReelFB hỏi mỗi ~4s. 0 = tắt.
+    abandon_after: float = 300.0
     min_free_mb: float = 1024.0      # ổ chứa outputPath còn ít hơn → job fail ngay (disk_full), không gửi bot
     min_free_data_mb: float = 100.0  # ổ chứa data/ (database, log) còn ít hơn → worker tạm dừng nhận job
     accounts: list[AccountConfig] = field(default_factory=list)
@@ -138,6 +141,7 @@ def load_settings(root: Optional[Path] = None) -> Settings:
     s.video_timeout = float(_env("GROKTELE_VIDEO_TIMEOUT", str(s.video_timeout)))
     s.cancel_quiet = float(_env("GROKTELE_CANCEL_QUIET", str(s.cancel_quiet)))
     s.min_free_mb = float(_env("GROKTELE_MIN_FREE_MB", str(s.min_free_mb)))
+    s.abandon_after = float(_env("GROKTELE_ABANDON_AFTER", str(s.abandon_after)))
     s.orphan_grace = float(_env("GROKTELE_ORPHAN_GRACE", str(s.orphan_grace)))
     s.accounts = load_accounts(s.accounts_file)
     return s

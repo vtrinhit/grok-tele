@@ -90,6 +90,33 @@ def _status(settings: Settings) -> None:
         print(f"  {d['drive']:<6} {free}{warn}")
 
 
+def _cancel_all(settings: Settings) -> None:
+    """Huỷ mọi job đang chờ / đang chạy. Server đang chạy → gọi API (job đang render được /cancel đúng cách)."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(f"http://{settings.host}:{settings.port}/grok/jobs/cancel-all", method="POST",
+                                 data=b"{}", headers={"Content-Type": "application/json"})
+    if settings.api_key:
+        req.add_header("Authorization", f"Bearer {settings.api_key}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            n = json.loads(resp.read().decode("utf-8")).get("cancelled", 0)
+        print(f"Đã huỷ {n} job (qua server đang chạy).")
+        return
+    except (urllib.error.URLError, OSError):
+        pass
+    from groktele.db import DB
+
+    if not settings.db_path.exists():
+        print("Chưa có dữ liệu, không có job nào.")
+        return
+    db = DB(settings.db_path)
+    n = sum(1 for j in db.active_jobs() if db.cancel(j["id"], message="Huỷ toàn bộ hàng đợi (cancel-all)"))
+    print(f"Server đang tắt: đã đánh dấu huỷ {n} job trong database.")
+
+
 def _set_account(settings: Settings, name: str, status: str) -> None:
     from groktele.db import DB
 
@@ -173,6 +200,8 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("status", help="Xem tài khoản và thống kê job")
 
+    sub.add_parser("cancel-all", help="Huỷ mọi job đang chờ / đang chạy")
+
     for cmd, desc in (("pause", "Tạm dừng 1 tài khoản"), ("resume", "Chạy lại tài khoản (sau khi gia hạn)")):
         p = sub.add_parser(cmd, help=desc)
         p.add_argument("name")
@@ -205,6 +234,8 @@ def main(argv: list[str] | None = None) -> None:
         _set_account(settings, args.name, "paused")
     elif args.cmd == "resume":
         _set_account(settings, args.name, "connecting")
+    elif args.cmd == "cancel-all":
+        _cancel_all(settings)
     elif args.cmd == "try":
         asyncio.run(_try(settings, args.name, args.image, args.prompt, args.aspect, args.duration,
                          args.resolution, args.out))

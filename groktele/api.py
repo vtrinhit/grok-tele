@@ -335,6 +335,7 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
         if existing is None:
             _check_disk(v)  # job trùng clientRef (vd đã xong) vẫn trả bình thường dù ổ đầy
         job, dedup = _create(v)
+        db.touch_job(job["id"])
         return JSONResponse({"jobId": job["id"], "status": job["status"], "deduplicated": dedup}, status_code=202)
 
     @r.post("/jobs/batch", status_code=202)
@@ -369,7 +370,12 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
         job = db.get_job(job_id)
         if not job:
             raise ApiError(404, "not_found", f"Không có job {job_id}")
+        db.touch_job(job_id)  # còn client chờ job này → không tự huỷ
         return job_to_api(job)
+
+    @r.post("/jobs/cancel-all")
+    async def cancel_all() -> dict:
+        return {"cancelled": manager.cancel_all()}
 
     @r.delete("/jobs/{job_id}")
     async def cancel_job(job_id: str) -> dict:
