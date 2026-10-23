@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from groktele import __version__
 from groktele.config import ASPECT_MAP, RESOLUTION_MAP, VALID_DURATIONS, Settings
+from groktele import disk
 from groktele.bot_driver import hours_left
 from groktele.db import DB, TERMINAL, new_id
 from groktele.worker import Manager
@@ -43,7 +44,22 @@ def _err(status: int, code: str, message: str, details: Optional[dict] = None) -
 
 
 _HTTP_CODES = {400: "invalid_input", 401: "unauthorized", 403: "forbidden_origin", 404: "not_found",
-               405: "invalid_input", 409: "conflict", 413: "payload_too_large", 503: "unavailable"}
+               405: "invalid_input", 409: "conflict", 413: "payload_too_large", 503: "unavailable",
+               507: "insufficient_storage"}
+
+
+def disk_report(settings: Settings, db: DB) -> list[dict]:
+    """Dung lượng trống của ổ chứa data/ và các ổ chứa file kết quả gần đây."""
+    paths = [settings.data_dir] + [Path(j["output_path"]).parent for j in db.list_jobs(limit=50)]
+    seen: dict[str, dict] = {}
+    for p in paths:
+        drive = disk.drive_of(p)
+        if drive in seen:
+            continue
+        free = disk.free_mb(p)
+        seen[drive] = {"drive": drive, "freeMb": round(free) if free is not None else None,
+                       "low": free is not None and free < settings.min_free_mb * 2}
+    return list(seen.values())
 
 
 # ------------------------------------------------------------- serialization
@@ -218,6 +234,10 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
 
     @app.exception_handler(Exception)
     async def _internal(_: Request, exc: Exception) -> JSONResponse:
+        if disk.is_disk_full(exc):
+            log.error("Lỗi API vì ổ đĩa đầy: %s", exc)
+            return _err(507, "insufficient_storage", f"Ổ đĩa đầy, không ghi được dữ liệu: {exc}",
+                        {"reason": "disk_full"})
         log.exception("Lỗi API: %s", exc)
         return _err(500, "internal", str(exc) or type(exc).__name__)
 
@@ -290,12 +310,30 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
         log.info("Nhận %s (%s %ss %s): %s", job["id"], v["aspect"], v["duration"], v["resolution"], v["prompt"][:60])
         return job, False
 
+    def _output_dir(v: dict) -> Path:
+        if v["output_path"]:
+            return Path(v["output_path"]).parent
+        return Path(v["output_dir"]) if v["output_dir"] else settings.outputs_dir
+
+    def _check_disk(v: dict, index: Optional[int] = None) -> None:
+        try:
+            disk.check_free(_output_dir(v), settings.min_free_mb)
+        except disk.DiskFullError as exc:
+            details: dict[str, Any] = {"reason": "disk_full", "path": str(_output_dir(v)),
+                                       "freeMb": round(disk.free_mb(_output_dir(v)) or 0)}
+            if index is not None:
+                details["index"] = index
+            raise ApiError(507, "insufficient_storage", str(exc), details) from None
+
     @r.post("/jobs", status_code=202)
     async def create_job(request: Request) -> JSONResponse:
         body = await _json(request)
         v = _normalize_account(validate_job(body, settings))
         if not manager.usable_accounts(v["account"]):
             raise _no_account_error(v["account"])
+        existing = db.find_active_by_client_ref(v["client_ref"]) if v["client_ref"] else None
+        if existing is None:
+            _check_disk(v)  # job trùng clientRef (vd đã xong) vẫn trả bình thường dù ổ đầy
         job, dedup = _create(v)
         return JSONResponse({"jobId": job["id"], "status": job["status"], "deduplicated": dedup}, status_code=202)
 
@@ -313,6 +351,8 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
         for i, v in enumerate(validated):
             if not manager.usable_accounts(v["account"]):
                 raise _no_account_error(v["account"], i)
+            if not (v["client_ref"] and db.find_active_by_client_ref(v["client_ref"])):
+                _check_disk(v, i)
         batch_id = new_id("bat")
         ids = [_create(v, batch_id)[0]["id"] for v in validated]
         return JSONResponse({"batchId": batch_id, "jobIds": ids}, status_code=202)
@@ -387,6 +427,7 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
                 "queuedJobs": counts["queued"],
                 "runningJobs": counts["running"],
             },
+            "disk": disk_report(settings, db),
         }
 
     @r.post("/accounts/{name}/pause")

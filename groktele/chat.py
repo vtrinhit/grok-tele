@@ -200,14 +200,22 @@ class TelethonChat:
                 progress(done / total)
 
         doc = getattr(msg.raw, "document", None)
-        if doc is not None:
-            # Gói 512 KB (mặc định Telethon 128 KB) → ít vòng gọi hơn, tải nhanh hơn nhiều.
-            await _io(self.client.download_file(doc, str(tmp), part_size_kb=512, file_size=doc.size,
-                                                progress_callback=_cb), "download", "tải video")
-        else:
-            await _io(self.client.download_media(msg.raw, file=str(tmp), progress_callback=_cb),
-                      "download", "tải video")
-        os.replace(tmp, path)
+        try:
+            if doc is not None:
+                # Gói 512 KB (mặc định Telethon 128 KB) → ít vòng gọi hơn, tải nhanh hơn nhiều.
+                await _io(self.client.download_file(doc, str(tmp), part_size_kb=512, file_size=doc.size,
+                                                    progress_callback=_cb), "download", "tải video")
+            else:
+                await _io(self.client.download_media(msg.raw, file=str(tmp), progress_callback=_cb),
+                          "download", "tải video")
+            os.replace(tmp, path)
+        except BaseException:
+            # Không để file .part dở dang chiếm chỗ (nhất là khi ổ đầy).
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         return path.stat().st_size
 
     async def close(self) -> None:

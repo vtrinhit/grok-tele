@@ -88,6 +88,8 @@ class Settings:
     no_account_fail_check: float = 10.0  # chu kỳ fail job đang chờ khi không còn tài khoản dùng được
     action_delay: tuple[float, float] = (0.6, 1.5)
     upload_ttl_days: int = 7
+    min_free_mb: float = 1024.0      # ổ chứa outputPath còn ít hơn → job fail ngay (disk_full), không gửi bot
+    min_free_data_mb: float = 100.0  # ổ chứa data/ (database, log) còn ít hơn → worker tạm dừng nhận job
     accounts: list[AccountConfig] = field(default_factory=list)
 
     @property
@@ -135,6 +137,7 @@ def load_settings(root: Optional[Path] = None) -> Settings:
     s.max_attempts = int(_env("GROKTELE_MAX_ATTEMPTS", str(s.max_attempts)))
     s.video_timeout = float(_env("GROKTELE_VIDEO_TIMEOUT", str(s.video_timeout)))
     s.cancel_quiet = float(_env("GROKTELE_CANCEL_QUIET", str(s.cancel_quiet)))
+    s.min_free_mb = float(_env("GROKTELE_MIN_FREE_MB", str(s.min_free_mb)))
     s.orphan_grace = float(_env("GROKTELE_ORPHAN_GRACE", str(s.orphan_grace)))
     s.accounts = load_accounts(s.accounts_file)
     return s

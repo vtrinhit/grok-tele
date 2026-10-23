@@ -22,8 +22,10 @@ from groktele.bot_driver import (
     run_job,
     send_cancel,
 )
+from groktele import disk
 from groktele.chat import AuthRequired, BotChat
 from groktele.config import AccountConfig, Settings
+from groktele.disk import is_disk_full
 from groktele.db import DB, USABLE_STATUSES, now_iso
 
 log = logging.getLogger("groktele.worker")
@@ -88,6 +90,7 @@ class AccountWorker:
         self.current_job: Optional[str] = None
         self._next_health = 0.0
         self._stopping = False
+        self._disk_warned_at = 0.0
 
     # --------------------------------------------------------------- state
     def _set(self, status: str, reason: Optional[str] = None, cooldown: float = 0.0, **extra) -> None:
@@ -142,10 +145,33 @@ class AccountWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # không bao giờ để worker chết
+                if is_disk_full(exc):
+                    # Database/log không ghi được: không đụng DB nữa (sẽ lại lỗi), chờ người dọn ổ.
+                    self._log_disk_full(f"Ổ đĩa đầy, không ghi được dữ liệu: {exc}")
+                    await asyncio.sleep(30)
+                    continue
                 log.exception("[%s] lỗi không mong đợi trong vòng lặp: %s", self.name, exc)
                 await self._drop_chat()
-                self._cooldown(self.settings.network_cooldown, f"Lỗi: {exc}")
+                try:
+                    self._cooldown(self.settings.network_cooldown, f"Lỗi: {exc}")
+                except Exception:
+                    pass
                 await asyncio.sleep(1)
+
+    def _log_disk_full(self, message: str) -> None:
+        # Tối đa 1 dòng / 5 phút để không làm đầy thêm ổ bằng log.
+        now = time.time()
+        if now - self._disk_warned_at >= 300:
+            self._disk_warned_at = now
+            log.error("[%s] %s", self.name, message)
+
+    def _data_disk_ok(self) -> bool:
+        free = disk.free_mb(self.settings.data_dir)
+        if free is not None and free < self.settings.min_free_data_mb:
+            self._log_disk_full(f"Ổ chứa {self.settings.data_dir} chỉ còn {free:.0f} MB — tạm dừng nhận job "
+                                f"tới khi dọn ổ")
+            return False
+        return True
 
     async def _tick(self) -> None:
         acc = self.db.get_account(self.name) or {}
@@ -178,9 +204,20 @@ class AccountWorker:
             await asyncio.sleep(self.settings.orphan_poll)
             return
 
+        if not self._data_disk_ok():
+            await asyncio.sleep(30)
+            return
+
         job = self.db.claim_job(self.name)
         if not job:
             await asyncio.sleep(self.settings.idle_poll)
+            return
+        try:
+            # Kiểm tra trước khi gửi ảnh: ổ chứa outputPath đầy thì fail ngay, không tốn lượt render của bot.
+            disk.check_free(Path(job["output_path"]).parent, self.settings.min_free_mb)
+        except disk.DiskFullError as exc:
+            self.db.finish_failed(job["id"], kind=exc.kind, message=str(exc))
+            log.error("[%s] %s không chạy: %s", self.name, job["id"], exc)
             return
         await self._run_one(job)
 
@@ -201,8 +238,13 @@ class AccountWorker:
                     log.info("[%s] %s nhận video về muộn: %s (%d KB)", self.name, job_id, job["output_path"],
                              size // 1024)
                 except Exception as exc:
-                    self.db.requeue(job_id, refund_attempt=True, kind="network", message=f"Tải video muộn lỗi: {exc}")
-                    log.warning("[%s] %s tải video về muộn lỗi, xếp lại: %s", self.name, job_id, exc)
+                    if is_disk_full(exc):
+                        self.db.finish_failed(job_id, kind="disk_full", message=f"Ổ đĩa đầy khi tải video: {exc}")
+                        log.error("[%s] %s ổ đĩa đầy khi tải video về muộn: %s", self.name, job_id, exc)
+                    else:
+                        self.db.requeue(job_id, refund_attempt=True, kind="network",
+                                        message=f"Tải video muộn lỗi: {exc}")
+                        log.warning("[%s] %s tải video về muộn lỗi, xếp lại: %s", self.name, job_id, exc)
             else:
                 log.info("[%s] bỏ video về muộn của %s (job đã %s)", self.name, job_id,
                          job["status"] if job else "không còn")
@@ -317,7 +359,7 @@ class AccountWorker:
             return
         except Exception as exc:
             self._handle_failure(job, exc)
-            if isinstance(exc, NETWORK_ERRORS):
+            if isinstance(exc, NETWORK_ERRORS) and not is_disk_full(exc):
                 await self._drop_chat()
             elif isinstance(exc, RetryableError):
                 # Timeout hoặc bot báo lỗi khi đã bấm Tạo Video: render có thể vẫn chạy → /cancel rồi mới tạo lại.
@@ -365,7 +407,11 @@ class AccountWorker:
     def _handle_failure(self, job: dict, exc: BaseException) -> None:
         job_id = job["id"]
         msg = str(exc) or type(exc).__name__
-        if isinstance(exc, AccountExpired):
+        if is_disk_full(exc):
+            # Trước đây lỗi này rơi vào nhánh "mạng" → thử lại vô hạn, bot render mãi. Giờ fail ngay.
+            self.db.finish_failed(job_id, kind="disk_full", message=f"Ổ đĩa đầy: {msg}")
+            log.error("[%s] %s ổ đĩa đầy, không thử lại: %s", self.name, job_id, msg)
+        elif isinstance(exc, AccountExpired):
             self.db.requeue(job_id, refund_attempt=True, kind=exc.kind, message=msg)
             self._set("expired", msg)
         elif isinstance(exc, BotMaintenance):
@@ -452,7 +498,8 @@ class Manager:
             try:
                 self.fail_unrunnable()
             except Exception as exc:  # pragma: no cover
-                log.exception("fail_unrunnable lỗi: %s", exc)
+                if not is_disk_full(exc):  # ổ đầy: worker đã báo, đừng spam log mỗi 10s
+                    log.exception("fail_unrunnable lỗi: %s", exc)
 
     def usable_accounts(self, pinned: Optional[str] = None) -> list[str]:
         out = []

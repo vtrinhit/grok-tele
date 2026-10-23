@@ -81,6 +81,13 @@ def _status(settings: Settings) -> None:
     rate = f"{l24['successRate'] * 100:.1f}%" if l24["successRate"] is not None else "-"
     avg = f"{l24['avgJobMs'] / 1000:.0f}s" if l24["avgJobMs"] else "-"
     print(f"24h: xong {l24['succeeded']}, lỗi {l24['failed']}, tỉ lệ {rate}, trung bình {avg}/job")
+    from groktele.api import disk_report
+
+    print("\nỔ đĩa:")
+    for d in disk_report(settings, db):
+        free = f"{d['freeMb'] / 1024:.1f} GB trống" if d["freeMb"] is not None else "không đọc được"
+        warn = "  ⚠ SẮP ĐẦY" if d["low"] else ""
+        print(f"  {d['drive']:<6} {free}{warn}")
 
 
 def _set_account(settings: Settings, name: str, status: str) -> None:
