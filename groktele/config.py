@@ -73,6 +73,9 @@ class Settings:
     default_duration: int = 10
     default_resolution: str = "720p"
     max_attempts: int = 3
+    # Grok báo "vi phạm chính sách": tạo lại ngay (không /cancel) tối đa ngần này lượt, rồi fail content_policy.
+    # Kiểm duyệt của Grok không ổn định nên mặc định thử thêm 1 lần; đặt 1 để fail luôn.
+    policy_attempts: int = 2
     ui_timeout: float = 60.0
     video_timeout: float = 600.0  # video thật ~1–4 phút; quá 10 phút thì /cancel và thử lại
     # Sau /cancel, không thấy dấu hiệu render (video, tin % được cập nhật) trong ngần này giây → coi như đã huỷ.
@@ -138,6 +141,7 @@ def load_settings(root: Optional[Path] = None) -> Settings:
     s.default_duration = int(_env("GROKTELE_DEFAULT_DURATION", str(s.default_duration)))
     s.default_resolution = _env("GROKTELE_DEFAULT_RESOLUTION", s.default_resolution)
     s.max_attempts = int(_env("GROKTELE_MAX_ATTEMPTS", str(s.max_attempts)))
+    s.policy_attempts = int(_env("GROKTELE_POLICY_ATTEMPTS", str(s.policy_attempts)))
     s.video_timeout = float(_env("GROKTELE_VIDEO_TIMEOUT", str(s.video_timeout)))
     s.cancel_quiet = float(_env("GROKTELE_CANCEL_QUIET", str(s.cancel_quiet)))
     s.min_free_mb = float(_env("GROKTELE_MIN_FREE_MB", str(s.min_free_mb)))

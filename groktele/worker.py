@@ -14,6 +14,7 @@ from groktele.bot_driver import (
     DriverError,
     JobParams,
     JobState,
+    PolicyViolation,
     RetryableError,
     check_status,
     find_orphan_outcome,
@@ -414,6 +415,14 @@ class AccountWorker:
         elif isinstance(exc, AccountExpired):
             self.db.requeue(job_id, refund_attempt=True, kind=exc.kind, message=msg)
             self._set("expired", msg)
+        elif isinstance(exc, PolicyViolation):
+            # Render đã dừng hẳn: không /cancel, không chờ video về muộn → tạo lại ngay hoặc fail luôn.
+            if int(job["attempts"]) >= min(self.settings.policy_attempts, self.settings.max_attempts):
+                self.db.finish_failed(job_id, kind=exc.kind, message=msg)
+                log.error("[%s] %s Grok từ chối nội dung sau %d lượt: %s", self.name, job_id, job["attempts"], msg)
+            else:
+                self.db.requeue(job_id, refund_attempt=False, kind=exc.kind, message=msg)
+                log.warning("[%s] %s Grok từ chối nội dung lượt %d, tạo lại ngay", self.name, job_id, job["attempts"])
         elif isinstance(exc, BotMaintenance):
             self.db.requeue(job_id, refund_attempt=True, kind=exc.kind, message=msg)
             self._cooldown(self.settings.maintenance_cooldown, msg)

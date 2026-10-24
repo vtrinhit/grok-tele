@@ -42,6 +42,12 @@ class RetryableError(DriverError):
     """Lỗi của lần chạy này (timeout, bot báo lỗi). Tính 1 lượt, retry tới max_attempts."""
 
 
+class PolicyViolation(DriverError):
+    """Grok từ chối nội dung ("vi phạm chính sách"). Render đã dừng hẳn → không cần /cancel, tạo lại ngay."""
+
+    kind = "content_policy"
+
+
 class BotMaintenance(DriverError):
     """Bot bảo trì / reset mạng. Job quay lại hàng đợi, không tính lượt; tài khoản nghỉ một lúc."""
 
@@ -82,7 +88,9 @@ _MAINTENANCE = ("bảo trì", "đóng bot", "tạm đóng", "tạm dừng hoạt
 _RESET = ("reset mạng", "gửi lại giúp", "tác vụ chưa hoàn thành")
 _EXPIRED = ("zalo", "hết lượt", "đã hết hạn", "hết hạn sử dụng", "video thử thành công", "vui lòng gia hạn",
             "chưa gia hạn", "không còn lượt")
-_ERROR = ("lỗi", "thất bại", "không thể tạo", "không tạo được", "failed", "error", "vi phạm", "kiểm duyệt",
+# "⚠️ Nội dung yêu cầu vi phạm chính sách của Grok nên không thể tạo video. 📝 Vui lòng chỉnh sửa prompt..."
+_POLICY = ("vi phạm", "kiểm duyệt", "chính sách của grok")
+_ERROR = ("lỗi", "thất bại", "không thể tạo", "không tạo được", "failed", "error",
           # "⚠️ Không hoàn tất tác vụ (loi tai file video: context deadline exceeded). Bạn hãy gửi lại ảnh..."
           # — bot viết "loi" không dấu.
           "không hoàn tất", "loi tai", "deadline exceeded", "timeout")
@@ -91,7 +99,8 @@ _ERROR = ("lỗi", "thất bại", "không thể tạo", "không tạo được"
 def classify(text: str) -> Optional[str]:
     """Phân loại 1 tin của bot.
 
-    Trả về: back_online | maintenance | reset | expired | accepted | options | progress | done | status | error | None
+    Trả về: back_online | maintenance | reset | expired | accepted | options | progress | done | cancelled | status
+            | policy | error | None
     """
     t = norm(text)
     if not t:
@@ -116,6 +125,8 @@ def classify(text: str) -> Optional[str]:
         return "reset"
     if any(k in t for k in _MAINTENANCE):
         return "maintenance"
+    if any(k in t for k in _POLICY):
+        return "policy"  # trước "error": tin này có chữ "không thể tạo"
     if any(k in t for k in _ERROR):
         return "error"
     return None
@@ -237,6 +248,11 @@ class _Waiter:
                 raise BotMaintenance(f"Bot đang bảo trì: {msg.text[:200]}")
             if cls == "reset":
                 raise BotMaintenance(f"Bot reset, cần gửi lại: {msg.text[:200]}", kind="reset")
+            if cls == "policy" and ev.kind == "new":
+                # Bot đã dừng render của job này (tin % bị xoá ngay) → không còn video về muộn, không cần /cancel.
+                if self.state is not None:
+                    self.state.render_ended = True
+                raise PolicyViolation(f"Grok từ chối nội dung: {msg.text[:300]}")
             if cls == "error" and self.accepted and ev.kind == "new":
                 # KHÔNG coi là render đã dừng: thực tế bot báo "Không hoàn tất tác vụ" rồi vài phút sau vẫn
                 # hiện "Đang tạo video 99%". Worker sẽ /cancel và chờ render dở trước khi gửi job mới.
@@ -358,7 +374,7 @@ async def find_orphan_outcome(chat: BotChat, baseline: int, cancel_at: Optional[
         cls = classify(msg.text)
         if cls == "accepted":
             accepted = True
-        elif cls == "reset" or (cls == "done" and accepted):
+        elif cls == "reset" or (cls in ("done", "policy") and accepted):
             # "done" chỉ tính khi sau "Đã nhận yêu cầu" của chính render này (tránh tin "done" của job trước).
             # Tin lỗi của bot KHÔNG tính: bot có thể báo lỗi rồi vẫn render tiếp và gửi video.
             return "ended", None

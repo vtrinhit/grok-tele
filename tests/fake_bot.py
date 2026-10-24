@@ -23,6 +23,8 @@ EXPIRED = ("🎉 Bạn đã nhận video thử thành công! Để tiếp tục 
            "admin liên hệ.")
 RENDER_ERROR = "❌ Có lỗi xảy ra khi tạo video. Bạn hãy gửi lại ảnh và prompt nhé."
 DONE = "✅ Nhiệm vụ đã hoàn thành, nếu bạn muốn tạo thêm hãy gửi nhé!"
+POLICY = ("⚠️ Nội dung yêu cầu vi phạm chính sách của Grok nên không thể tạo video.\n"
+          "📝 Vui lòng chỉnh sửa prompt hoặc ảnh rồi thử lại nhé.")
 CANCELLED = "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé. 🎬"
 
 
@@ -33,7 +35,7 @@ class CaptionTooLong(Exception):
 @dataclass
 class Scenario:
     photo: str = "options"       # options | maintenance | expired | silent
-    render: str = "video"        # video | error | silent | maintenance
+    render: str = "video"        # video | error | policy | silent | maintenance
     ignore_clicks: bool = False  # bot không phản hồi khi bấm tuỳ chọn
     video_bytes: int = 20_000
     step: float = 0.01           # độ trễ giữa các tin của bot
@@ -212,6 +214,11 @@ class FakeChat:
             self.bot_says(MAINTENANCE)
             return
         prog = self.bot_says(f"🎬 Đang tạo video ({s['aspect']} | {s['res']}): 0%")
+        if sc.render == "policy":  # bot thật: dừng ở ~20%, xoá tin % rồi báo vi phạm
+            await asyncio.sleep(sc.step)
+            self.messages.pop(prog.id, None)
+            self.bot_says(POLICY)
+            return
         for pct in (30, 60, 99):
             await asyncio.sleep(sc.step)
             prog.text = f"🎬 Đang tạo video ({s['aspect']} | {s['res']}): {pct}%"

@@ -297,3 +297,31 @@ async def test_bot_error_then_still_renders_is_cancelled(settings: Settings, ima
             assert "/cancel" in f.chats["acc1"].texts
     finally:
         fake_bot.RENDER_ERROR = old
+
+
+async def test_policy_violation_retries_at_once_without_cancel(settings: Settings, image: Path, tmp_path: Path) -> None:
+    # Grok từ chối nội dung: render đã dừng hẳn → không /cancel, không chờ, tạo lại ngay.
+    settings.ui_timeout = 5
+    settings.orphan_grace = 60
+    settings.cancel_quiet = 60  # nếu lỡ /cancel thì sẽ phải chờ lâu → test timeout
+    f = Factory({"acc1": [Scenario(render="policy"), Scenario(step=0.05)]})
+    async with running(settings, f) as (client, db):
+        a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+        job = await wait_status(client, a, ("succeeded", "failed"), timeout=10)
+        assert job["status"] == "succeeded" and job["attempts"] == 2, job
+        chat = f.chats["acc1"]
+        assert "/cancel" not in chat.texts and len(chat.photos) == 2
+        assert db.get_account("acc1")["orphan_job"] is None
+
+
+async def test_policy_violation_fails_after_policy_attempts(settings: Settings, image: Path, tmp_path: Path) -> None:
+    settings.ui_timeout = 5
+    settings.max_attempts = 3
+    settings.policy_attempts = 2
+    f = Factory({"acc1": [Scenario(render="policy")] * 3})
+    async with running(settings, f) as (client, db):
+        a = (await _post(client, image, "JOB-A", tmp_path / "a.mp4")).json()["jobId"]
+        job = await wait_status(client, a, ("succeeded", "failed"), timeout=10)
+        assert job["status"] == "failed" and job["attempts"] == 2, job
+        assert job["error"]["kind"] == "content_policy"
+        assert "/cancel" not in f.chats["acc1"].texts and len(f.chats["acc1"].photos) == 2

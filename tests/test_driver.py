@@ -42,6 +42,8 @@ REAL_TEXTS = {
     "💌Hello anh em, bot đã cập nhật thêm chức năng tạo ảnh và chức năng nối dài video": None,
     "🆔 ID Telegram của bạn: 1790523934": None,
     "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé. 🎬": "cancelled",
+    "⚠️ Nội dung yêu cầu vi phạm chính sách của Grok nên không thể tạo video.\n📝 Vui lòng chỉnh sửa prompt hoặc ảnh "
+    "rồi thử lại nhé.": "policy",
 }
 
 
