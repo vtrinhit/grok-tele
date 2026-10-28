@@ -26,6 +26,7 @@ def settings(tmp_path: Path) -> Settings:
     s.no_account_fail_check = 0.1
     s.cancel_quiet = 0.5
     s.abandon_after = 600.0
+    s.ui_fail_cooldown = 0.05
     s.accounts = [AccountConfig(name="acc1", session="fake")]
     return s
 

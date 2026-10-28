@@ -39,7 +39,7 @@ class BotChat(Protocol):
     def drain_events(self) -> None: ...
     async def get_message(self, msg_id: int) -> Optional[BotMessage]: ...
     async def history_after(self, min_id: int) -> list[BotMessage]: ...
-    async def click(self, msg_id: int, row: int, col: int) -> None: ...
+    async def click(self, msg_id: int, row: int, col: int) -> Optional[str]: ...
     async def download(self, msg: BotMessage, path: Path,
                        progress: Optional[Callable[[float], None]] = None) -> int: ...
     async def close(self) -> None: ...
@@ -175,7 +175,8 @@ class TelethonChat:
         msgs = await _io(self.client.get_messages(self.bot, min_id=int(min_id), limit=100), "read", "đọc lịch sử")
         return [_to_bot_message(m) for m in reversed(msgs) if not m.out]
 
-    async def click(self, msg_id: int, row: int, col: int) -> None:
+    async def click(self, msg_id: int, row: int, col: int) -> Optional[str]:
+        """Bấm nút; trả về câu trả lời callback của bot (toast / popup) nếu có."""
         from telethon.errors import BotResponseTimeoutError, MessageIdInvalidError
 
         m = await _io(self.client.get_messages(self.bot, ids=msg_id), "read", "đọc bảng tuỳ chọn")
@@ -183,11 +184,13 @@ class TelethonChat:
             raise LookupError(f"Tin {msg_id} không còn (bot đã xoá)")
         try:
             # Bot trả lời callback bằng toast; chậm cũng không sao, ta kiểm tra kết quả qua tin đã sửa.
-            await asyncio.wait_for(m.click(row, col), timeout=20)
+            answer = await asyncio.wait_for(m.click(row, col), timeout=20)
         except (BotResponseTimeoutError, asyncio.TimeoutError):
             log.debug("callback %s/%s,%s không có trả lời, bỏ qua", msg_id, row, col)
+            return None
         except MessageIdInvalidError as exc:
             raise LookupError(f"Tin {msg_id} không còn bấm được") from exc
+        return getattr(answer, "message", None) or None
 
     async def download(self, msg: BotMessage, path: Path,
                        progress: Optional[Callable[[float], None]] = None) -> int:

@@ -28,6 +28,10 @@ POLICY = ("⚠️ Nội dung yêu cầu vi phạm chính sách của Grok nên k
 CANCELLED = "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé. 🎬"
 
 
+# Popup thật (28/10) khi bấm Tạo Video lúc bot sắp khởi động lại.
+RESTARTING = "🔄 Hệ thống đang chuẩn bị khởi động lại khi hết tác vụ, bạn vui lòng bấm lại sau khoảng 30 giây nhé!"
+
+
 class CaptionTooLong(Exception):
     """Giống telethon MediaCaptionTooLongError."""
 
@@ -40,6 +44,7 @@ class Scenario:
     video_bytes: int = 20_000
     step: float = 0.01           # độ trễ giữa các tin của bot
     cancel_kills: bool = True    # /cancel có dừng render đang chạy không
+    start_answer: str = ""       # popup khi bấm Tạo Video; RESTARTING = bot từ chối, không render
 
 
 class FakeChat:
@@ -179,7 +184,7 @@ class FakeChat:
     async def history_after(self, min_id: int) -> list[BotMessage]:
         return [copy.deepcopy(self.messages[i]) for i in sorted(self.messages) if i > min_id]
 
-    async def click(self, msg_id: int, row: int, col: int) -> None:
+    async def click(self, msg_id: int, row: int, col: int) -> Optional[str]:
         m = self.messages.get(msg_id)
         if m is None:
             raise LookupError("message deleted")
@@ -187,13 +192,15 @@ class FakeChat:
         self.clicks.append(label)
         sc = self._current or self.default
         if "Tạo Video" in label:
+            if sc.start_answer == RESTARTING:
+                return RESTARTING  # bảng tuỳ chọn giữ nguyên, không render
             del self.messages[msg_id]
             self._render_task = asyncio.ensure_future(self._render(sc))
             self._render_sc = sc
             self._tasks.append(self._render_task)
-            return
+            return sc.start_answer or "Đã nhận yêu cầu tạo Video!"
         if sc.ignore_clicks:
-            return
+            return None
         if row == 0:
             self.sel["aspect"] = "9:16" if col == 0 else "16:9"
         elif row == 1:
@@ -201,6 +208,7 @@ class FakeChat:
         elif row == 2:
             self.sel["res"] = "720p" if col == 0 else "1080p"
         self._edit(BotMessage(id=msg_id, text=self._options_text(), buttons=self._keyboard()))
+        return None
 
     async def _render(self, sc: Scenario) -> None:
         s = dict(self.sel)

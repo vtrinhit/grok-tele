@@ -54,6 +54,17 @@ class BotMaintenance(DriverError):
     kind = "maintenance"
 
 
+class BotRestarting(BotMaintenance):
+    """Bấm Tạo Video, bot từ chối bằng popup "đang chuẩn bị khởi động lại... bấm lại sau khoảng 30 giây".
+    Bot KHÔNG render → không /cancel, không chờ video về muộn; job quay lại hàng đợi sau `retry_after` giây."""
+
+    kind = "maintenance"
+
+    def __init__(self, message: str, retry_after: float):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class AccountExpired(DriverError):
     """Tài khoản hết hạn gói hoặc hết lượt thử."""
 
@@ -130,6 +141,17 @@ def classify(text: str) -> Optional[str]:
     if any(k in t for k in _ERROR):
         return "error"
     return None
+
+
+# Popup khi bấm Tạo Video (28/10): "🔄 Hệ thống đang chuẩn bị khởi động lại khi hết tác vụ, bạn vui lòng bấm lại
+# sau khoảng 30 giây nhé!". Chỉ nhận đúng mẫu này; popup lạ thì vẫn coi như bot có thể đang render.
+_RESTART_RE = re.compile(r"khởi động lại.*bấm lại sau(?: khoảng)? (\d+)\s*giây")
+
+
+def restart_refusal(answer: Optional[str]) -> Optional[float]:
+    """Số giây bot bảo chờ nếu `answer` là lời từ chối "đang khởi động lại", ngược lại None."""
+    m = _RESTART_RE.search(norm(answer or ""))
+    return float(m.group(1)) if m else None
 
 
 def progress_percent(text: str) -> Optional[int]:
@@ -330,7 +352,13 @@ async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, vide
     state.render_baseline = baseline
     if state.on_render_start is not None:
         state.on_render_start(baseline)
-    await chat.click(options.id, start[0], start[1])
+    answer = await chat.click(options.id, start[0], start[1])
+    wait_s = restart_refusal(answer)
+    if wait_s is not None:
+        state.render_ended = True  # bot không nhận yêu cầu: không có render dở, worker xoá dấu orphan
+        raise BotRestarting(f"Bot từ chối Tạo Video: {answer[:200]}", retry_after=wait_s + 5)  # type: ignore[index]
+    if answer and "đã nhận" not in norm(answer):
+        log.warning("Bot trả lời lạ khi bấm Tạo Video (vẫn chờ như thường): %s", answer[:200])
 
     await waiter.wait(lambda m, c: c == "accepted", ui_timeout, "xác nhận 'Đã nhận yêu cầu'")
     waiter.accepted = True

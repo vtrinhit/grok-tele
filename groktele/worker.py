@@ -92,6 +92,7 @@ class AccountWorker:
         self._next_health = 0.0
         self._stopping = False
         self._disk_warned_at = 0.0
+        self._ui_failures = 0  # lỗi liên tiếp trước khi bot render (xem _ui_failure_cooldown)
 
     # --------------------------------------------------------------- state
     def _set(self, status: str, reason: Optional[str] = None, cooldown: float = 0.0, **extra) -> None:
@@ -360,6 +361,8 @@ class AccountWorker:
             return
         except Exception as exc:
             self._handle_failure(job, exc)
+            if isinstance(exc, RetryableError) and state.render_baseline is None:
+                self._ui_failure_cooldown(job_id, exc)
             if isinstance(exc, NETWORK_ERRORS) and not is_disk_full(exc):
                 await self._drop_chat()
             elif isinstance(exc, RetryableError):
@@ -381,11 +384,29 @@ class AccountWorker:
                     log.info("[%s] %s dừng khi bot đang render, chờ video về muộn trước khi nhận job mới",
                              self.name, job_id)
 
+        self._ui_failures = 0
         if self.db.finish_success(job_id, result_bytes=result.bytes,
                                   duration_ms=result.duration_ms or int(job["duration"]) * 1000):
             log.info("[%s] %s xong: %s (%d KB)", self.name, job_id, result.path, result.bytes // 1024)
         else:
             log.info("[%s] %s xong nhưng job đã bị huỷ, bỏ kết quả", self.name, job_id)
+
+    def _ui_failure_cooldown(self, job_id: str, exc: BaseException) -> None:
+        """Lỗi trước khi bấm Tạo Video (không thấy bảng tuỳ chọn / nút, bảng bị xoá...), thường do bot đổi giao diện.
+
+        Trước đây job được nhận lại ngay: 3 lượt trong ~25s rồi sang job kế → cả hàng đợi gửi ảnh dồn dập vào bot
+        và fail trong vài phút (28/10: 27 ảnh trong 7 phút). Giờ tài khoản nghỉ ui_fail_cooldown giây, nhân đôi mỗi
+        lần lỗi liên tiếp, tối đa maintenance_cooldown.
+        """
+        self._ui_failures += 1
+        acc = self.db.get_account(self.name) or {}
+        if acc.get("status") != "active":
+            return  # _handle_failure đã chuyển sang trạng thái khác (hết hạn, dead...)
+        seconds = min(self.settings.ui_fail_cooldown * 2 ** (self._ui_failures - 1),
+                      self.settings.maintenance_cooldown)
+        log.warning("[%s] %s lỗi trước khi bot render (%d lần liên tiếp), nghỉ %ds trước job tiếp theo",
+                    self.name, job_id, self._ui_failures, int(seconds))
+        self._cooldown(seconds, f"Lỗi giao diện bot {self._ui_failures} lần liên tiếp: {exc}")
 
     def _job_deadline(self) -> float:
         s = self.settings
@@ -425,7 +446,10 @@ class AccountWorker:
                 log.warning("[%s] %s Grok từ chối nội dung lượt %d, tạo lại ngay", self.name, job_id, job["attempts"])
         elif isinstance(exc, BotMaintenance):
             self.db.requeue(job_id, refund_attempt=True, kind=exc.kind, message=msg)
-            self._cooldown(self.settings.maintenance_cooldown, msg)
+            # BotRestarting: bot báo rõ số giây cần chờ (thường 30s), không phải nghỉ cả maintenance_cooldown.
+            wait = getattr(exc, "retry_after", None)
+            self._cooldown(min(wait, self.settings.maintenance_cooldown) if wait else self.settings.maintenance_cooldown,
+                           msg)
         elif DEAD_ERRORS and isinstance(exc, DEAD_ERRORS) or isinstance(exc, AuthRequired):
             self.db.requeue(job_id, refund_attempt=True, kind="auth_required", message=msg)
             self._set("dead", f"Session chết: {type(exc).__name__}")

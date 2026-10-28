@@ -96,6 +96,9 @@ class Settings:
     abandon_after: float = 300.0
     min_free_mb: float = 1024.0      # ổ chứa outputPath còn ít hơn → job fail ngay (disk_full), không gửi bot
     min_free_data_mb: float = 100.0  # ổ chứa data/ (database, log) còn ít hơn → worker tạm dừng nhận job
+    # Lỗi trước khi bot render (không thấy nút / bảng tuỳ chọn, thường do bot đổi giao diện): tài khoản nghỉ ngần
+    # này giây trước job tiếp theo, nhân đôi mỗi lần lỗi liên tiếp, tối đa maintenance_cooldown.
+    ui_fail_cooldown: float = 30.0
     accounts: list[AccountConfig] = field(default_factory=list)
 
     @property
@@ -147,6 +150,7 @@ def load_settings(root: Optional[Path] = None) -> Settings:
     s.min_free_mb = float(_env("GROKTELE_MIN_FREE_MB", str(s.min_free_mb)))
     s.abandon_after = float(_env("GROKTELE_ABANDON_AFTER", str(s.abandon_after)))
     s.orphan_grace = float(_env("GROKTELE_ORPHAN_GRACE", str(s.orphan_grace)))
+    s.ui_fail_cooldown = float(_env("GROKTELE_UI_FAIL_COOLDOWN", str(s.ui_fail_cooldown)))
     s.accounts = load_accounts(s.accounts_file)
     return s
 
