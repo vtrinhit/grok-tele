@@ -108,6 +108,17 @@ def job_to_api(job: dict) -> dict:
 
 
 # ---------------------------------------------------------------- validation
+def clip_prompt(prompt: str, limit: int = MAX_PROMPT) -> str:
+    """Cắt prompt dài về `limit` ký tự, ưu tiên cắt ở khoảng trắng để không đứt giữa chữ."""
+    if len(prompt) <= limit:
+        return prompt
+    cut = prompt[:limit]
+    space = max(cut.rfind(" "), cut.rfind("\n"))
+    if space >= limit - 200:
+        cut = cut[:space]
+    return cut.rstrip()
+
+
 def _field_error(field: str, message: str, index: Optional[int] = None) -> ApiError:
     details: dict[str, Any] = {"field": field}
     if index is not None:
@@ -129,7 +140,8 @@ def validate_job(body: Any, settings: Settings, index: Optional[int] = None) -> 
         raise _field_error("prompt", "bắt buộc", index)
     prompt = prompt.strip()
     if len(prompt) > MAX_PROMPT:
-        raise _field_error("prompt", f"tối đa {MAX_PROMPT} ký tự", index)
+        log.warning("Prompt %d ký tự vượt %d → tự cắt bớt", len(prompt), MAX_PROMPT)
+        prompt = clip_prompt(prompt)
 
     image_path = body.get("imagePath")
     image_b64 = body.get("imageBase64")

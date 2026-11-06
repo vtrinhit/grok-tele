@@ -268,11 +268,19 @@ async def test_restart_requeues_running_job(settings: Settings, image: Path) -> 
 async def test_long_prompt_via_api(settings: Settings, image: Path) -> None:
     prompt = "CHARACTERS: Camille Moreau: 38-year-old French woman, fair skin, auburn hair. " * 60
     async with running(settings, Factory()) as (client, _):
-        too_long = await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": prompt[:4001]})
-        assert too_long.status_code == 400, too_long.text
-        jid = (await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": prompt[:4000]})).json()["jobId"]
-        job = await wait_status(client, jid, ("succeeded", "failed"))
+        # Prompt vượt 4000 ký tự vẫn được nhận, GrokTele tự cắt ở khoảng trắng gần nhất.
+        resp = await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": prompt})
+        assert resp.status_code == 202, resp.text
+        job = await wait_status(client, resp.json()["jobId"], ("succeeded", "failed"))
         assert job["status"] == "succeeded" and job["attempts"] == 1, job
+
+
+def test_clip_prompt_cuts_at_word_boundary() -> None:
+    from groktele.api import clip_prompt
+
+    assert clip_prompt("short") == "short"
+    clipped = clip_prompt("word " * 1000)
+    assert len(clipped) <= 4000 and clipped.endswith("word")
 
 
 async def test_telegram_input_error_fails_without_retry(settings: Settings, image: Path, monkeypatch) -> None:
