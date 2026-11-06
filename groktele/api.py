@@ -27,7 +27,7 @@ log = logging.getLogger("groktele.api")
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_PROMPT = 2000
+MAX_PROMPT = 4000  # gửi qua Telegram dạng tin nhắn (≤ 4096); khớp TEXT_LIMIT trong bot_driver
 
 
 class ApiError(Exception):

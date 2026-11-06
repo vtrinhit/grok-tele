@@ -266,9 +266,11 @@ async def test_restart_requeues_running_job(settings: Settings, image: Path) -> 
 
 
 async def test_long_prompt_via_api(settings: Settings, image: Path) -> None:
-    prompt = "CHARACTERS: Camille Moreau: 38-year-old French woman, fair skin, auburn hair. " * 24
+    prompt = "CHARACTERS: Camille Moreau: 38-year-old French woman, fair skin, auburn hair. " * 60
     async with running(settings, Factory()) as (client, _):
-        jid = (await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": prompt[:2000]})).json()["jobId"]
+        too_long = await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": prompt[:4001]})
+        assert too_long.status_code == 400, too_long.text
+        jid = (await client.post("/grok/jobs", json={"imagePath": str(image), "prompt": prompt[:4000]})).json()["jobId"]
         job = await wait_status(client, jid, ("succeeded", "failed"))
         assert job["status"] == "succeeded" and job["attempts"] == 1, job
 
