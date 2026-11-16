@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from fake_bot import EXPIRED, MAINTENANCE, RENDER_ERROR, STATUS_ACTIVE, FakeChat, Scenario
+from fake_bot import EXPIRED, MAINTENANCE, RENDER_ERROR, STATUS_ACTIVE, TRIAL_STATUS, FakeChat, Scenario
 from groktele.bot_driver import (
     AccountExpired,
     BotMaintenance,
@@ -29,6 +29,7 @@ REAL_TEXTS = {
     "🎬 Đang tạo video (9:16 | 1080p): 30%": "progress",
     "✅ Nhiệm vụ đã hoàn thành, nếu bạn muốn tạo thêm hãy gửi nhé!": "done",
     STATUS_ACTIVE: "status",
+    TRIAL_STATUS: "status",
     "🛠 Hiện đang đóng bot để bảo trì, bot sẽ quay trở lại ngay đây thôi": "maintenance",
     "LOA LOA LOA, Bot sẽ tạm đóng trong khoảng 10 phút để xử lý sự cố đợi video quá 10p của bạn": "maintenance",
     "🎉 Bot đã hết bảo trì và hoạt động trở lại! Bạn có thể gửi ảnh và prompt để tạo video nhé.": "back_online",
@@ -222,3 +223,11 @@ async def test_bot_incomplete_task_retries_at_once(image: Path, tmp_path: Path) 
         assert state.orphaned  # bot báo lỗi nhưng có thể vẫn render → worker phải /cancel
     finally:
         fake_bot.RENDER_ERROR = old
+
+
+async def test_check_status_trial_account_is_expired() -> None:
+    """Tài khoản chưa có / hết gói: bot trả lời /status bằng mẫu "LƯỢT THỬ" (thấy thật 16/11, acc2)."""
+    chat = FakeChat(status="active")
+    chat.status_text = TRIAL_STATUS
+    info = await check_status(chat, timeout=1)
+    assert info.active is False

@@ -128,7 +128,8 @@ def classify(text: str) -> Optional[str]:
         return "done"
     if "làm mới trạng thái" in t or "đã hủy" in t or "đã huỷ" in t:
         return "cancelled"  # trả lời /cancel: "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé."
-    if "thông tin tài khoản" in t or "trạng thái:" in t:
+    # "👤 TÀI KHOẢN & LƯỢT THỬ CỦA BẠN": /status của tài khoản không có gói (không có "còn hạn" → hết hạn).
+    if "thông tin tài khoản" in t or "trạng thái:" in t or "lượt thử của bạn" in t:
         return "status"
     if any(k in t for k in _EXPIRED):
         return "expired"

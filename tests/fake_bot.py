@@ -19,6 +19,9 @@ STATUS_ACTIVE = ("👤 THÔNG TIN TÀI KHOẢN\n🆔 ID: 1790523934\n✅ Trạng
                  "25/10/2026 (giờ Việt Nam)\n♾ Tạo Video AI (720p & 1080p) không giới hạn!")
 STATUS_EXPIRED = "👤 THÔNG TIN TÀI KHOẢN\n🆔 ID: 1790523934\n❌ Trạng thái: Đã hết hạn sử dụng"
 MAINTENANCE = "🛠 Hiện đang đóng bot để bảo trì, bot sẽ quay trở lại ngay đây thôi"
+# /status của tài khoản không có gói (thấy thật 16/11): không có "Trạng thái:".
+TRIAL_STATUS = ("👤 TÀI KHOẢN & LƯỢT THỬ CỦA BẠN (ID: 8430961034)\n\n🖼 Lượt thử Tạo Ảnh 2K / Thay Đồ 2K: Còn 01 lượt "
+                "miễn phí\n🎬 Lượt thử Tạo Video AI: Đã dùng hết")
 EXPIRED = ("🎉 Bạn đã nhận video thử thành công! Để tiếp tục sử dụng, vui lòng gia hạn. Nhập Tên Zalo của bạn để "
            "admin liên hệ.")
 RENDER_ERROR = "❌ Có lỗi xảy ra khi tạo video. Bạn hãy gửi lại ảnh và prompt nhé."
@@ -167,7 +170,8 @@ class FakeChat:
         if text == "/status" and self.status != "silent":
             async def reply() -> None:
                 await asyncio.sleep(0.005)
-                self.bot_says(STATUS_ACTIVE if self.status == "active" else STATUS_EXPIRED)
+                self.bot_says(getattr(self, "status_text", None)
+                              or (STATUS_ACTIVE if self.status == "active" else STATUS_EXPIRED))
 
             self._later(reply)
         return my_id
