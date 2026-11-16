@@ -30,6 +30,8 @@ CANCELLED = "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịc
 
 # Popup thật (28/10) khi bấm Tạo Video lúc bot sắp khởi động lại.
 RESTARTING = "🔄 Hệ thống đang chuẩn bị khởi động lại khi hết tác vụ, bạn vui lòng bấm lại sau khoảng 30 giây nhé!"
+# Popup thật (16/11) khi bấm Tạo Video lúc tài khoản còn 1 video đang render (kể cả ở bot khác cùng backend).
+BUSY = "Video trước của bạn đang được tạo, vui lòng đợi hoàn tất nhé!"
 
 
 class CaptionTooLong(Exception):
@@ -192,8 +194,8 @@ class FakeChat:
         self.clicks.append(label)
         sc = self._current or self.default
         if "Tạo Video" in label:
-            if sc.start_answer == RESTARTING:
-                return RESTARTING  # bảng tuỳ chọn giữ nguyên, không render
+            if sc.start_answer in (RESTARTING, BUSY):
+                return sc.start_answer  # bảng tuỳ chọn giữ nguyên, không render
             del self.messages[msg_id]
             self._render_task = asyncio.ensure_future(self._render(sc))
             self._render_sc = sc

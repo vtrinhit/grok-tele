@@ -148,10 +148,21 @@ def classify(text: str) -> Optional[str]:
 _RESTART_RE = re.compile(r"khởi động lại.*bấm lại sau(?: khoảng)? (\d+)\s*giây")
 
 
+# Tài khoản còn 1 video đang render (bot chỉ render 1 video / người dùng, tính chung mọi bot cùng backend).
+_BUSY_RE = re.compile(r"video trước của bạn đang được tạo")
+BUSY_RETRY_AFTER = 60.0
+
+
 def restart_refusal(answer: Optional[str]) -> Optional[float]:
-    """Số giây bot bảo chờ nếu `answer` là lời từ chối "đang khởi động lại", ngược lại None."""
-    m = _RESTART_RE.search(norm(answer or ""))
-    return float(m.group(1)) if m else None
+    """Số giây cần chờ nếu bot từ chối Tạo Video (đang khởi động lại / còn video đang render), ngược lại None.
+
+    Cả 2 trường hợp bot đều KHÔNG render job này. Riêng "còn video đang render": /cancel sẽ giết video đó.
+    """
+    t = norm(answer or "")
+    m = _RESTART_RE.search(t)
+    if m:
+        return float(m.group(1))
+    return BUSY_RETRY_AFTER if _BUSY_RE.search(t) else None
 
 
 def progress_percent(text: str) -> Optional[int]:
