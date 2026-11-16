@@ -167,16 +167,19 @@ class DB:
         args.append(max(1, min(int(limit), 500)))
         return self._all(sql, tuple(args))
 
-    def claim_job(self, account: str) -> Optional[dict]:
-        """Nhận job queued ưu tiên cao nhất, cũ nhất cho `account`. Nguyên tử."""
+    def claim_job(self, account: str, base: Optional[str] = None) -> Optional[dict]:
+        """Nhận job queued ưu tiên cao nhất, cũ nhất cho luồng `account`. Nguyên tử.
+
+        `base` = tên tài khoản Telegram của luồng: job ghim vào tài khoản thì luồng (bot) nào của nó cũng nhận được.
+        """
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 row = self._conn.execute(
                     """SELECT id FROM jobs WHERE status = 'queued'
-                         AND (pinned_account IS NULL OR pinned_account = ?)
+                         AND (pinned_account IS NULL OR pinned_account IN (?, ?))
                        ORDER BY priority DESC, seq ASC LIMIT 1""",
-                    (account,),
+                    (account, base or account),
                 ).fetchone()
                 if row:
                     self._conn.execute(

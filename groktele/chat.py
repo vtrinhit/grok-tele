@@ -84,15 +84,105 @@ def _to_bot_message(m: Any) -> BotMessage:
     )
 
 
-class TelethonChat:
-    """Chat với bot qua 1 tài khoản Telegram (TelegramClient đã đăng nhập)."""
+class ClientPool:
+    """1 session Telegram = 1 TelegramClient, dùng chung cho mọi luồng (bot) của cùng tài khoản.
 
-    def __init__(self, client: Any, bot_entity: Any):
+    Mở cùng 1 session ở 2 kết nối sẽ bị Telegram huỷ session (AuthKeyDuplicated), nên các luồng của 1 tài khoản
+    phải đi chung 1 client. Client chỉ ngắt khi luồng cuối cùng trả lại.
+    """
+
+    def __init__(self) -> None:
+        self._clients: dict[str, Any] = {}
+        self._refs: dict[str, int] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock(self, key: str) -> asyncio.Lock:
+        return self._locks.setdefault(key, asyncio.Lock())
+
+    async def acquire(self, key: str, make: Callable[[], Any]) -> Any:
+        async with self._lock(key):
+            client = self._clients.get(key)
+            if client is None:
+                client = await make()
+                self._clients[key], self._refs[key] = client, 1
+                return client
+            if not await self._alive(client):
+                # Luồng kia còn giữ client nhưng kết nối đã chết lửng → kết nối lại tại chỗ (handler vẫn còn).
+                log.warning("[%s] kết nối Telegram dùng chung đã chết, kết nối lại", key)
+                try:
+                    await asyncio.wait_for(client.disconnect(), timeout=10)
+                except Exception:
+                    pass
+                await _io(client.connect(), "connect", "kết nối lại")
+                if not await _io(client.is_user_authorized(), "read", "kiểm tra đăng nhập"):
+                    raise AuthRequired("Session không hợp lệ hoặc đã bị đăng xuất, chạy lại: "
+                                       "python -m groktele login <tên>")
+            self._refs[key] += 1
+            return client
+
+    @staticmethod
+    async def _alive(client: Any) -> bool:
+        if not client.is_connected():
+            return False
+        try:
+            await _io(client.get_me(), "read", "kiểm tra kết nối")
+            return True
+        except (ConnectionError, OSError, asyncio.IncompleteReadError):
+            return False
+
+    async def release(self, key: str, client: Any) -> None:
+        async with self._lock(key):
+            if self._clients.get(key) is not client:
+                return
+            self._refs[key] -= 1
+            if self._refs[key] > 0:
+                return
+            del self._clients[key], self._refs[key]
+            try:
+                await asyncio.wait_for(client.disconnect(), timeout=10)
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+
+async def _new_client(session: str, api_id: int, api_hash: str, proxy: Optional[dict]) -> Any:
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+
+    client = TelegramClient(
+        StringSession(session), api_id, api_hash,
+        proxy=proxy,
+        device_model="GrokTele",
+        system_version="Windows",
+        app_version="1.0",
+        flood_sleep_threshold=30,  # FloodWait ngắn thì Telethon tự ngủ, dài hơn thì raise
+        connection_retries=5,
+        retry_delay=3,
+        auto_reconnect=True,
+    )
+    try:
+        await _io(client.connect(), "connect", "kết nối")
+        if not await _io(client.is_user_authorized(), "read", "kiểm tra đăng nhập"):
+            raise AuthRequired("Session không hợp lệ hoặc đã bị đăng xuất, chạy lại: python -m groktele login <tên>")
+    except BaseException:
+        # Không để lại kết nối treo khi thử lại nhiều lần.
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        raise
+    return client
+
+
+class TelethonChat:
+    """Chat với 1 bot qua 1 tài khoản Telegram (TelegramClient đã đăng nhập, có thể dùng chung với bot khác)."""
+
+    def __init__(self, client: Any, bot_entity: Any, release: Optional[Callable[[], Any]] = None):
         from telethon import events
 
         self.client = client
         self.bot = bot_entity
         self.bot_id = int(getattr(bot_entity, "id"))
+        self._release = release  # trả client về ClientPool; None = client của riêng chat này
         self._queue: asyncio.Queue[ChatEvent] = asyncio.Queue()
         self._handlers = [
             (self._on_new, events.NewMessage(chats=self.bot_id, incoming=True)),
@@ -103,34 +193,35 @@ class TelethonChat:
 
     @classmethod
     async def connect(cls, *, session: str, api_id: int, api_hash: str, bot: str,
-                      proxy: Optional[dict] = None) -> "TelethonChat":
-        from telethon import TelegramClient
-        from telethon.sessions import StringSession
+                      proxy: Optional[dict] = None, pool: Optional[ClientPool] = None,
+                      key: Optional[str] = None) -> "TelethonChat":
+        """`pool` + `key` (tên tài khoản): dùng chung 1 kết nối Telegram cho mọi bot của tài khoản đó."""
+        async def make() -> Any:
+            return await _new_client(session, api_id, api_hash, proxy)
 
-        client = TelegramClient(
-            StringSession(session), api_id, api_hash,
-            proxy=proxy,
-            device_model="GrokTele",
-            system_version="Windows",
-            app_version="1.0",
-            flood_sleep_threshold=30,  # FloodWait ngắn thì Telethon tự ngủ, dài hơn thì raise
-            connection_retries=5,
-            retry_delay=3,
-            auto_reconnect=True,
-        )
+        shared = pool is not None and key is not None
+        client = await pool.acquire(key, make) if shared else await make()  # type: ignore[union-attr,arg-type]
+
+        async def release() -> None:
+            if shared:
+                await pool.release(key, client)  # type: ignore[union-attr,arg-type]
+            else:
+                try:
+                    await asyncio.wait_for(client.disconnect(), timeout=10)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+
         try:
-            await _io(client.connect(), "connect", "kết nối")
-            if not await _io(client.is_user_authorized(), "read", "kiểm tra đăng nhập"):
-                raise AuthRequired("Session không hợp lệ hoặc đã bị đăng xuất, chạy lại: python -m groktele login <tên>")
-            entity = await _io(client.get_entity(bot), "read", "tìm bot")
+            entity = await _io(client.get_entity(bot), "read", f"tìm bot @{bot}")
+            if not await _io(client.get_messages(entity, limit=1), "read", "đọc tin cuối"):
+                # Tài khoản chưa từng nhắn bot này (vd bot thứ 2 mới thêm): /start để bot nhận người dùng.
+                log.info("Chưa có hội thoại với @%s, gửi /start", bot)
+                await _io(client.send_message(entity, "/start"), "send", "gửi /start")
+                await asyncio.sleep(3)
         except BaseException:
-            # Không để lại kết nối treo khi thử lại nhiều lần.
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
+            await release()
             raise
-        return cls(client, entity)
+        return cls(client, entity, release)
 
     async def me(self) -> str:
         me = await _io(self.client.get_me(), "read", "đọc thông tin tài khoản")
@@ -224,6 +315,9 @@ class TelethonChat:
     async def close(self) -> None:
         for handler, ev in self._handlers:
             self.client.remove_event_handler(handler, ev)
+        if self._release is not None:
+            await self._release()
+            return
         try:
             await asyncio.wait_for(self.client.disconnect(), timeout=10)
         except Exception:  # pragma: no cover - best effort

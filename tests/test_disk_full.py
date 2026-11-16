@@ -92,11 +92,11 @@ async def test_worker_survives_database_full(settings: Settings, image: Path, mo
     calls = {"n": 0}
     real = DB.claim_job
 
-    def flaky(self, account):  # noqa: ANN001
+    def flaky(self, account, *args):  # noqa: ANN001
         calls["n"] += 1
         if calls["n"] <= 2:
             raise sqlite3.OperationalError("database or disk is full")
-        return real(self, account)
+        return real(self, account, *args)
 
     monkeypatch.setattr(DB, "claim_job", flaky)
     monkeypatch.setattr("groktele.worker.asyncio.sleep", _fast_sleep)

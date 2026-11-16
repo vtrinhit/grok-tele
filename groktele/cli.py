@@ -33,10 +33,16 @@ async def _login(settings: Settings, name: str, proxy: str | None, phone: str | 
     )
     me = await client.get_me()
     session = client.session.save()
-    try:
-        await client.send_message(settings.bot, "/status")
-    except Exception as exc:
-        print(f"Cảnh báo: không nhắn được cho @{settings.bot}: {exc}")
+    for bot in settings.bot_list:
+        try:
+            # Bot chưa từng nhắn (vd bot thứ 2) cần /start trước để nhận người dùng.
+            if not await client.get_messages(bot, limit=1):
+                await client.send_message(bot, "/start")
+                await asyncio.sleep(1)
+            await client.send_message(bot, "/status")
+            print(f"Đã chào @{bot}")
+        except Exception as exc:
+            print(f"Cảnh báo: không nhắn được cho @{bot}: {exc}")
     await client.disconnect()
     save_account(settings.accounts_file, AccountConfig(name=name, session=session, proxy=proxy, enabled=True))
     print(f"Đã lưu '{name}' = {me.first_name or ''} (id {me.id}) vào {settings.accounts_file}")
@@ -69,7 +75,7 @@ def _status(settings: Settings) -> None:
         left = hours_left(a["expires_at"])
         left_txt = f" (còn {left:.0f}h)" if left is not None else ""
         warn = "  ⚠ SẮP HẾT HẠN" if left is not None and left < 24 else ""
-        print(f"  {a['name']:<12} {a['status']:<10}{cd}  xong {a['jobs_done']:>5}  hạn {a['expires_at'] or '?'}"
+        print(f"  {a['name']:<28} {a['status']:<10}{cd}  xong {a['jobs_done']:>5}  hạn {a['expires_at'] or '?'}"
               f"{left_txt}{warn}  {a['telegram_user'] or ''}")
         if a.get("orphan_job"):
             print(f"               đang chờ video về muộn của {a['orphan_job']}")
@@ -121,15 +127,19 @@ def _set_account(settings: Settings, name: str, status: str) -> None:
     from groktele.db import DB
 
     db = DB(settings.db_path)
-    if not db.get_account(name):
+    # Tên tài khoản → mọi luồng (bot) của nó; tên luồng (acc1@Bot) → riêng luồng đó.
+    lanes = [a["name"] for a in db.list_accounts()
+             if a["name"] == name or (a["name"].startswith(name + "@") and a["status"] != "disabled")]
+    if not lanes:
         print(f"Không có tài khoản '{name}' (server đã chạy với tài khoản này chưa?)")
         raise SystemExit(1)
-    db.set_account(name, status=status, reason="CLI", cooldown_until=None)
-    print(f"{name} -> {status}")
+    for lane in lanes:
+        db.set_account(lane, status=status, reason="CLI", cooldown_until=None)
+        print(f"{lane} -> {status}")
 
 
 async def _try(settings: Settings, name: str, image: str, prompt: str, aspect: str, duration: int,
-               resolution: str, out: str | None) -> None:
+               resolution: str, out: str | None, bot: str | None = None) -> None:
     from groktele.bot_driver import JobParams, check_status, human_delay, run_job
     from groktele.chat import TelethonChat
     from groktele.config import RESOLUTION_MAP
@@ -147,9 +157,9 @@ async def _try(settings: Settings, name: str, image: str, prompt: str, aspect: s
         raise SystemExit(3)
     out_path = Path(out) if out else settings.outputs_dir / f"try_{int(time.time())}.mp4"
     chat = await TelethonChat.connect(session=acc.session, api_id=settings.api_id, api_hash=settings.api_hash,
-                                      bot=settings.bot, proxy=parse_proxy(acc.proxy))
+                                      bot=(bot or settings.bot).lstrip("@"), proxy=parse_proxy(acc.proxy))
     try:
-        print("Tài khoản:", await chat.me())
+        print("Tài khoản:", await chat.me(), "— bot @" + (bot or settings.bot).lstrip("@"))
         info = await check_status(chat)
         print(f"/status: active={info.active} hết hạn={info.expires_at}")
         t0 = time.time()
@@ -181,7 +191,7 @@ def main(argv: list[str] | None = None) -> None:
         except Exception:
             pass
     parser = argparse.ArgumentParser(prog="python -m groktele",
-                                     description="GrokTele — tạo video hàng loạt qua @GrokKian_bot")
+                                     description="GrokTele — tạo video hàng loạt qua @GrokKian_bot / @GrokKian2_bot")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -214,6 +224,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--duration", type=int, default=10, choices=[6, 10, 15])
     p.add_argument("--resolution", default="720p", choices=["480p", "720p", "1080p"])
     p.add_argument("--out")
+    p.add_argument("--bot", help="Bot muốn thử (mặc định bot chính), vd GrokKian2_bot")
 
     args = parser.parse_args(argv)
     settings = load_settings()
@@ -238,4 +249,4 @@ def main(argv: list[str] | None = None) -> None:
         _cancel_all(settings)
     elif args.cmd == "try":
         asyncio.run(_try(settings, args.name, args.image, args.prompt, args.aspect, args.duration,
-                         args.resolution, args.out))
+                         args.resolution, args.out, args.bot))

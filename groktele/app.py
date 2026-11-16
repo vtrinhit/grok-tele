@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable, Optional
 from fastapi import FastAPI
 
 from groktele.api import create_api
-from groktele.chat import BotChat, TelethonChat
+from groktele.chat import BotChat, ClientPool, TelethonChat
 from groktele.config import AccountConfig, Settings, parse_proxy
 from groktele.db import DB
 from groktele.worker import ChatFactory, Manager
@@ -47,10 +47,13 @@ def setup_logging(settings: Settings, level: int = logging.INFO) -> None:
 
 
 def telethon_factory(settings: Settings) -> ChatFactory:
+    pool = ClientPool()  # các luồng (bot) của cùng tài khoản dùng chung 1 kết nối Telegram
+
     async def factory(account: AccountConfig) -> BotChat:
         return await TelethonChat.connect(
             session=account.session, api_id=settings.api_id, api_hash=settings.api_hash,
-            bot=settings.bot, proxy=parse_proxy(account.proxy),
+            bot=account.bot or settings.bot, proxy=parse_proxy(account.proxy),
+            pool=pool, key=account.account,
         )
 
     return factory
@@ -172,6 +175,6 @@ def serve(settings: Settings) -> None:
     pid_file.write_text(str(os.getpid()), encoding="ascii")
     atexit.register(lambda: pid_file.unlink(missing_ok=True))
     app = build_app(settings)
-    log.info("GrokTele nghe tại http://%s:%d (bot @%s, %d tài khoản)", settings.host, settings.port,
-             settings.bot, len(settings.accounts))
+    log.info("GrokTele nghe tại http://%s:%d (bot %s; %d tài khoản, %d luồng)", settings.host, settings.port,
+             ", ".join("@" + b for b in settings.bot_list), len(settings.accounts), len(settings.expand_lanes()))
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning", access_log=False)
