@@ -1,8 +1,4 @@
-"""Worker: 1 luồng (tài khoản Telegram × bot) = 1 vòng lặp asyncio = 1 job tại một thời điểm.
-
-Các bot giống hệt nhau và dùng chung gói, nên 1 tài khoản có N bot = N luồng chạy song song. Mỗi luồng có
-hội thoại riêng với bot của nó (trạng thái, render dở, /cancel đều tách riêng), chỉ chung kết nối Telegram.
-"""
+"""Worker: 1 tài khoản Telegram = 1 vòng lặp asyncio = 1 job tại một thời điểm."""
 from __future__ import annotations
 
 import asyncio
@@ -214,7 +210,7 @@ class AccountWorker:
             await asyncio.sleep(30)
             return
 
-        job = self.db.claim_job(self.name, self.account.account)
+        job = self.db.claim_job(self.name)
         if not job:
             await asyncio.sleep(self.settings.idle_poll)
             return
@@ -498,19 +494,15 @@ class Manager:
         if n:
             log.info("Đưa %d job chạy dở về hàng đợi (job nào ReelFB không còn hỏi tới sẽ tự huỷ sau %ds)",
                      n, int(self.settings.abandon_after))
-        lanes = self.settings.expand_lanes()
-        names = {a.name for a in lanes}
+        names = {a.name for a in self.settings.accounts}
         for row in self.db.list_accounts():
             if row["name"] not in names:
-                self.db.set_account(row["name"], status="disabled",
-                                    reason="Không còn trong accounts.yaml / danh sách bot")
-        for acc in lanes:
+                self.db.set_account(row["name"], status="disabled", reason="Không còn trong accounts.yaml")
+        for acc in self.settings.accounts:
             w = AccountWorker(acc, self.settings, self.db, self.chat_factory, self.delay)
             self.workers[acc.name] = w
             w.start()
-        log.info("Khởi động %d luồng (%d tài khoản × bot %s): %s", len(self.workers), len(self.settings.accounts),
-                 ", ".join("@" + b for b in self.settings.bot_list),
-                 ", ".join(self.workers) or "(chưa có tài khoản)")
+        log.info("Khởi động %d worker: %s", len(self.workers), ", ".join(self.workers) or "(chưa có tài khoản)")
         self._fail_task = asyncio.create_task(self._fail_unrunnable_loop(), name="fail-unrunnable")
 
     async def stop(self) -> None:
@@ -545,19 +537,12 @@ class Manager:
                 if not is_disk_full(exc):  # ổ đầy: worker đã báo, đừng spam log mỗi 10s
                     log.exception("fail_unrunnable lỗi: %s", exc)
 
-    def lanes_of(self, name: str) -> list[AccountWorker]:
-        """Luồng mang đúng tên `name`, cộng mọi luồng (bot) của tài khoản Telegram tên `name`."""
-        return [w for w in self.workers.values() if name in (w.name, w.account.account)]
-
-    def knows(self, name: str) -> bool:
-        return bool(self.lanes_of(name))
-
     def usable_accounts(self, pinned: Optional[str] = None) -> list[str]:
-        """Các luồng còn chạy được job. `pinned` = tên luồng hoặc tên tài khoản (mọi bot của nó)."""
-        allowed = {w.name for w in self.lanes_of(pinned)} if pinned else set(self.workers)
         out = []
         for row in self.db.list_accounts():
-            if row["name"] not in allowed:
+            if row["name"] not in self.workers:
+                continue
+            if pinned and row["name"] != pinned:
                 continue
             if row["status"] in USABLE_STATUSES:
                 out.append(row["name"])
@@ -602,14 +587,14 @@ class Manager:
         return n
 
     def resume(self, name: str) -> bool:
-        lanes = [w for w in self.lanes_of(name) if w.account.enabled]
-        for w in lanes:  # tên tài khoản → resume mọi bot của nó (gia hạn 1 lần dùng cho cả các bot)
-            self.db.set_account(w.name, status="connecting", reason="Resume thủ công", cooldown_until=None)
-            w._next_health = 0.0
-        return bool(lanes)
+        if name not in self.workers or not self.workers[name].account.enabled:
+            return False
+        self.db.set_account(name, status="connecting", reason="Resume thủ công", cooldown_until=None)
+        self.workers[name]._next_health = 0.0
+        return True
 
     def pause(self, name: str) -> bool:
-        lanes = self.lanes_of(name)
-        for w in lanes:
-            self.db.set_account(w.name, status="paused", reason="Tạm dừng thủ công", cooldown_until=None)
-        return bool(lanes)
+        if name not in self.workers:
+            return False
+        self.db.set_account(name, status="paused", reason="Tạm dừng thủ công", cooldown_until=None)
+        return True

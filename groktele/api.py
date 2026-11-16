@@ -271,7 +271,7 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
         rows = db.list_accounts()
         if not manager.workers:
             why = "no_account"
-        elif pinned and not manager.knows(pinned):
+        elif pinned and pinned not in manager.workers:
             why = "no_account"
         else:
             why = "needs_human"
@@ -303,7 +303,7 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
 
     def _normalize_account(v: dict) -> dict:
         # accountId lạ (vd tên tài khoản MultiKit còn lưu trong ReelFB) → bỏ ghim thay vì từ chối job.
-        if v["account"] and not manager.knows(v["account"]):
+        if v["account"] and v["account"] not in manager.workers:
             log.warning("accountId '%s' không có trong GrokTele, bỏ qua (tự xoay tài khoản)", v["account"])
             v["account"] = None
         return v
@@ -421,8 +421,6 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
             out.append({
                 "id": name,
                 "label": name,
-                "bot": w.account.bot or settings.bot,
-                "telegramAccount": w.account.account,
                 "enabled": w.account.enabled,
                 "status": status,
                 "reason": a.get("reason"),
@@ -442,7 +440,6 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
             "accounts": out,
             "summary": {
                 "total": len(out),
-                "telegramAccounts": len({a["telegramAccount"] for a in out}),
                 "usable": sum(1 for a in out if a["usableFor"]["720p"]),
                 "active": sum(1 for a in out if a["status"] == "active"),
                 "queuedJobs": counts["queued"],

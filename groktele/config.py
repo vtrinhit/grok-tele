@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import unquote, urlparse
@@ -52,52 +52,19 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value)
 
 
-DEFAULT_BOTS = ("GrokKian_bot", "GrokKian2_bot")
-
-
 @dataclass
 class AccountConfig:
-    """1 tài khoản Telegram trong accounts.yaml — và cũng là 1 "luồng" (tài khoản × bot) khi đã qua `expand_lanes`.
-
-    Luồng: `name` = tên luồng (vd `acc1`, `acc1@GrokKian2_bot`), `bot` = bot của luồng, `base` = tên tài khoản gốc.
-    """
     name: str
     session: str
     proxy: Optional[str] = None
     enabled: bool = True
-    bots: Optional[list[str]] = None  # ghi đè danh sách bot cho riêng tài khoản này (accounts.yaml)
-    bot: str = ""
-    base: str = ""
-
-    @property
-    def account(self) -> str:
-        """Tên tài khoản Telegram gốc (các luồng cùng tài khoản dùng chung 1 kết nối)."""
-        return self.base or self.name
-
-
-def clean_bots(raw: Any) -> list[str]:
-    """'A, @B' hoặc ['A', 'B'] → ['A', 'B'] (bỏ @, bỏ trùng không phân biệt hoa thường, giữ thứ tự)."""
-    items = raw.replace(";", ",").split(",") if isinstance(raw, str) else list(raw or [])
-    out: list[str] = []
-    for item in items:
-        bot = str(item).strip().lstrip("@")
-        if bot and bot.lower() not in (b.lower() for b in out):
-            out.append(bot)
-    return out
-
-
-def lane_name(account: str, bot: str, primary: str) -> str:
-    """Bot chính giữ nguyên tên tài khoản (tương thích database và accountId cũ); bot khác thêm hậu tố @bot."""
-    return account if bot.lower() == primary.lower() else f"{account}@{bot}"
 
 
 @dataclass
 class Settings:
     api_id: int = 0
     api_hash: str = ""
-    bot: str = "GrokKian_bot"  # bot chính: luồng của bot này mang đúng tên tài khoản
-    # Mọi bot dùng song song (cùng giao diện, chung gói). Rỗng = chỉ bot chính.
-    bots: list[str] = field(default_factory=list)
+    bot: str = "GrokKian_bot"
     host: str = "127.0.0.1"
     port: int = 8888
     api_key: str = ""
@@ -135,21 +102,6 @@ class Settings:
     accounts: list[AccountConfig] = field(default_factory=list)
 
     @property
-    def bot_list(self) -> list[str]:
-        return clean_bots(self.bots) or [self.bot]
-
-    def bots_for(self, account: AccountConfig) -> list[str]:
-        return clean_bots(account.bots) or self.bot_list
-
-    def expand_lanes(self) -> list[AccountConfig]:
-        """Mỗi tài khoản × mỗi bot = 1 luồng (1 worker, 1 job tại một thời điểm)."""
-        lanes: list[AccountConfig] = []
-        for acc in self.accounts:
-            for bot in self.bots_for(acc):
-                lanes.append(replace(acc, name=lane_name(acc.name, bot, self.bot), bot=bot, base=acc.name))
-        return lanes
-
-    @property
     def data_dir(self) -> Path:
         return self.root / "data"
 
@@ -184,10 +136,7 @@ def load_settings(root: Optional[Path] = None) -> Settings:
     s = Settings(root=root)
     s.api_id = int(_env("TG_API_ID", "0") or 0)
     s.api_hash = _env("TG_API_HASH")
-    # GROKTELE_BOTS (nhiều bot) > GROKTELE_BOT (1 bot, cấu hình cũ) > mặc định cả 2 bot.
-    single = _env("GROKTELE_BOT").lstrip("@")
-    s.bots = clean_bots(_env("GROKTELE_BOTS")) or ([single] if single else list(DEFAULT_BOTS))
-    s.bot = s.bots[0]
+    s.bot = _env("GROKTELE_BOT", s.bot).lstrip("@") or s.bot
     s.host = _env("GROKTELE_HOST", s.host) or s.host
     s.port = int(_env("GROKTELE_PORT", str(s.port)) or s.port)
     s.api_key = _env("GROKTELE_API_KEY")
@@ -222,7 +171,6 @@ def load_accounts(path: Path) -> list[AccountConfig]:
                 session=str(item["session"]).strip(),
                 proxy=(str(item["proxy"]).strip() or None) if item.get("proxy") else None,
                 enabled=bool(item.get("enabled", True)),
-                bots=clean_bots(item.get("bots")) or None,
             )
         )
     return out
@@ -231,13 +179,9 @@ def load_accounts(path: Path) -> list[AccountConfig]:
 def save_account(path: Path, account: AccountConfig) -> None:
     """Thêm hoặc cập nhật tài khoản theo `name`, giữ nguyên các tài khoản khác."""
     accounts = load_accounts(path)
-    old = next((a for a in accounts if a.name == account.name), None)
-    if old is not None and account.bots is None:
-        account.bots = old.bots  # login lại không làm mất danh sách bot riêng của tài khoản
     accounts = [a for a in accounts if a.name != account.name] + [account]
     data = [
-        {"name": a.name, "session": a.session, "proxy": a.proxy, "enabled": a.enabled,
-         **({"bots": a.bots} if a.bots else {})}
+        {"name": a.name, "session": a.session, "proxy": a.proxy, "enabled": a.enabled}
         for a in accounts
     ]
     path.write_text(

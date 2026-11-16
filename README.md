@@ -143,21 +143,6 @@ Log: `data\groktele.log`. Dữ liệu job: `data\groktele.db`.
 Tỷ lệ `1:1`, `2:3`, `3:4`, `4:5` được gửi bằng nút Dọc 9:16; `3:2`, `4:3`, `21:9` bằng nút Ngang 16:9.
 `accountId` không có trong GrokTele bị bỏ qua (tự xoay tài khoản).
 
-## Nhiều bot song song
-
-`@GrokKian_bot` và `@GrokKian2_bot` giống hệt nhau và dùng chung gói: tài khoản mua 1 lần chạy được ở cả 2 bot.
-GrokTele coi mỗi cặp **tài khoản × bot** là 1 luồng, nên 1 tài khoản tạo được 2 video cùng lúc (mặc định bật cả 2 bot).
-
-- Cấu hình: `GROKTELE_BOTS=GrokKian_bot,GrokKian2_bot` trong `.env` (bot đầu là bot chính). Chỉ muốn 1 bot: ghi 1 tên.
-  Riêng từng tài khoản: thêm `bots: [GrokKian_bot]` trong `accounts.yaml`.
-- Tên luồng: bot chính giữ tên tài khoản (`acc1`), bot khác là `acc1@GrokKian2_bot`. `05.status.bat` và
-  `GET /grok/accounts` hiện từng luồng (kèm `bot`, `telegramAccount`); `summary.usable` = số luồng chạy được.
-- `accountId: acc1` = bot nào của acc1 rảnh thì nhận; `accountId: acc1@GrokKian2_bot` = đúng bot đó.
-- `pause` / `resume acc1` áp dụng cho mọi bot của acc1; ghi tên luồng để chỉ áp dụng 1 bot.
-- Các luồng của 1 tài khoản dùng chung 1 kết nối Telegram (không cần login lại). Lần đầu gặp bot mới, GrokTele tự
-  gửi `/start`. Một bot bảo trì / lỗi thì bot còn lại vẫn chạy.
-- Thử riêng 1 bot: `python -m groktele try acc1 anh.jpg "prompt" --bot GrokKian2_bot`.
-
 ## Khi bot đổi giao diện
 
 Mọi hiểu biết về bot nằm trong `groktele/bot_driver.py` (từ khoá tin nhắn, tên nút). Test mô phỏng bot ở
