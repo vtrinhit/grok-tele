@@ -14,6 +14,7 @@ from groktele.bot_driver import (
     check_status,
     classify,
     find_button,
+    is_selected,
     norm,
     progress_percent,
     run_job,
@@ -59,17 +60,26 @@ def test_progress_percent() -> None:
 
 
 def test_find_button_and_selection() -> None:
+    # Bàn phím thật 21/11: thời lượng 2 hàng.
     msg = BotMessage(id=1, buttons=[
-        ["✓📐 Dọc 9:16", "📐 Ngang 16:9"], ["6s", "✓ 10s", "15s"], ["✓ ⚡ 720p", "✨ 1080p Full HD"],
-        ["🎬 Tạo Video (từ ảnh + prompt)"],
+        ["✓📐 Dọc 9:16", "📐 Ngang 16:9"], ["3s", "5s", "6s", "7s"], ["8s", "10s", "12s", "✓ 15s"],
+        ["⚡ 720p", "✓ ✨ 1080p Full HD"], ["🎬 Tạo Video (từ ảnh + prompt)"],
     ])
     assert find_button(msg, "aspect", "16:9")[:2] == (0, 1)
-    assert find_button(msg, "duration", "6")[:2] == (1, 0)
-    assert find_button(msg, "duration", "15")[:2] == (1, 2)
-    assert find_button(msg, "duration", "10")[:2] == (1, 1)
-    assert find_button(msg, "resolution", "1080p")[:2] == (2, 1)
-    assert find_button(msg, "start")[:2] == (3, 0)
+    expected = {"3": (1, 0), "5": (1, 1), "6": (1, 2), "7": (1, 3),
+                "8": (2, 0), "10": (2, 1), "12": (2, 2), "15": (2, 3)}
+    for value, pos in expected.items():  # "5" không được khớp "15s", "1"/"2" không khớp "12s"
+        assert find_button(msg, "duration", value)[:2] == pos, value
+    assert find_button(msg, "duration", "1") is None and find_button(msg, "duration", "2") is None
+    assert is_selected(find_button(msg, "duration", "15")[2])
+    assert find_button(msg, "resolution", "720p")[:2] == (3, 0)
+    assert find_button(msg, "resolution", "1080p")[:2] == (3, 1)
+    assert find_button(msg, "start")[:2] == (4, 0)
     assert norm("✓ ⚡ 720p") == "720p"
+
+    old = BotMessage(id=2, buttons=[["6s", "✓ 10s", "15s"]])  # bàn phím cũ vẫn đọc được
+    assert find_button(old, "duration", "15")[:2] == (0, 2)
+    assert find_button(old, "duration", "5") is None
 
 
 def _params(image: Path, tmp_path: Path, **kw) -> JobParams:
@@ -95,6 +105,15 @@ async def test_run_job_changes_options(image: Path, tmp_path: Path) -> None:
                   ui_timeout=2, video_timeout=2)
     assert chat.clicks == ["📐 Ngang 16:9", "15s", "✨ 1080p Full HD", "🎬 Tạo Video (từ ảnh + prompt)"]
     assert chat.sel == {"aspect": "16:9", "duration": "15", "res": "1080p"}
+
+
+@pytest.mark.parametrize("duration", [3, 5, 6, 7, 8, 10, 12, 15])
+async def test_run_job_every_duration(image: Path, tmp_path: Path, duration: int) -> None:
+    chat = FakeChat()
+    await run_job(chat, _params(image, tmp_path, duration=duration), ui_timeout=2, video_timeout=2)
+    assert chat.sel["duration"] == str(duration)
+    assert chat.clicks[-1] == "🎬 Tạo Video (từ ảnh + prompt)"
+    assert chat.clicks[:-1] == ([] if duration == 10 else [f"{duration}s"])
 
 
 async def test_maintenance_on_photo(image: Path, tmp_path: Path) -> None:

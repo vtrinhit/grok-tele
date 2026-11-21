@@ -29,6 +29,8 @@ DONE = "✅ Nhiệm vụ đã hoàn thành, nếu bạn muốn tạo thêm hãy 
 POLICY = ("⚠️ Nội dung yêu cầu vi phạm chính sách của Grok nên không thể tạo video.\n"
           "📝 Vui lòng chỉnh sửa prompt hoặc ảnh rồi thử lại nhé.")
 CANCELLED = "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé. 🎬"
+# Bàn phím thật (21/11): thời lượng chia 2 hàng giữa hàng tỷ lệ và hàng chất lượng.
+DURATION_ROWS = (("3", "5", "6", "7"), ("8", "10", "12", "15"))
 
 
 # Popup thật (28/10) khi bấm Tạo Video lúc bot sắp khởi động lại.
@@ -98,7 +100,7 @@ class FakeChat:
         s = self.sel
         return [
             [mark("📐 Dọc 9:16", s["aspect"] == "9:16"), mark("📐 Ngang 16:9", s["aspect"] == "16:9")],
-            [mark(f"{d}s", s["duration"] == d) for d in ("6", "10", "15")],
+            *[[mark(f"{d}s", s["duration"] == d) for d in row] for row in DURATION_ROWS],
             [mark("⚡ 720p", s["res"] == "720p"), mark("✨ 1080p Full HD", s["res"] == "1080p")],
             ["🎬 Tạo Video (từ ảnh + prompt)"],
         ]
@@ -209,9 +211,9 @@ class FakeChat:
             return None
         if row == 0:
             self.sel["aspect"] = "9:16" if col == 0 else "16:9"
-        elif row == 1:
-            self.sel["duration"] = ("6", "10", "15")[col]
-        elif row == 2:
+        elif 1 <= row <= len(DURATION_ROWS):
+            self.sel["duration"] = DURATION_ROWS[row - 1][col]
+        elif row == len(DURATION_ROWS) + 1:
             self.sel["res"] = "720p" if col == 0 else "1080p"
         self._edit(BotMessage(id=msg_id, text=self._options_text(), buttons=self._keyboard()))
         return None

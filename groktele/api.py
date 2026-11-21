@@ -182,12 +182,13 @@ def validate_job(body: Any, settings: Settings, index: Optional[int] = None) -> 
         raise _field_error("aspectRatio", f"không hỗ trợ {aspect_in} (dùng {', '.join(ASPECT_MAP)})", index)
 
     raw_duration = body.get("duration", settings.default_duration)
+    duration_msg = f"phải là {', '.join(map(str, VALID_DURATIONS))} (giây)"
     try:
         duration = int(str(raw_duration).strip().rstrip("s"))
     except (TypeError, ValueError):
-        raise _field_error("duration", "phải là 6, 10 hoặc 15 (giây)", index)
+        raise _field_error("duration", duration_msg, index)
     if duration not in VALID_DURATIONS:
-        raise _field_error("duration", "phải là 6, 10 hoặc 15 (giây)", index)
+        raise _field_error("duration", duration_msg, index)
 
     res_in = str(body.get("resolution") or settings.default_resolution).lower()
     if res_in not in RESOLUTION_MAP:

@@ -108,7 +108,8 @@ async def test_validation_errors(settings: Settings, image: Path) -> None:
             ({"prompt": "x"}, "imagePath"),
             ({"imagePath": "relative.png", "prompt": "x"}, "imagePath"),
             ({"imagePath": str(image), "prompt": "x", "aspectRatio": "5:7"}, "aspectRatio"),
-            ({"imagePath": str(image), "prompt": "x", "duration": 7}, "duration"),
+            ({"imagePath": str(image), "prompt": "x", "duration": 9}, "duration"),
+            ({"imagePath": str(image), "prompt": "x", "duration": "4s"}, "duration"),
             ({"imagePath": str(image), "prompt": "x", "resolution": "4k"}, "resolution"),
             ({"imagePath": str(image), "prompt": "x", "outputPath": "C:/a.mov"}, "outputPath"),
         ]
@@ -225,7 +226,7 @@ async def test_batch_parallel_two_accounts(settings: Settings, image: Path, tmp_
     settings.accounts = [AccountConfig("acc1", "a"), AccountConfig("acc2", "b")]
     async with running(settings, Factory()) as (client, _):
         r = await client.post("/grok/jobs/batch", json={
-            "defaults": {"duration": 6, "resolution": "1080p"},
+            "defaults": {"duration": "12s", "resolution": "1080p"},
             "jobs": [{"imagePath": str(image), "prompt": f"p{i}", "outputPath": str(tmp_path / f"o{i}.mp4")}
                      for i in range(6)],
         })
@@ -233,6 +234,7 @@ async def test_batch_parallel_two_accounts(settings: Settings, image: Path, tmp_
         ids = r.json()["jobIds"]
         jobs = [await wait_status(client, i, ("succeeded", "failed"), timeout=15) for i in ids]
         assert all(j["status"] == "succeeded" for j in jobs)
+        assert all(j["input"]["duration"] == 12 for j in jobs)
         assert {j["accountLabel"] for j in jobs} == {"acc1", "acc2"}
         for i, j in enumerate(jobs):  # mỗi file đúng prompt của job đó
             assert Path(j["result"]["filePath"]).read_bytes().startswith(f"VIDEO:p{i}|".encode())

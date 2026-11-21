@@ -2,8 +2,9 @@
 
 Luồng (quan sát thật 2026-10-22):
   1. gửi ảnh + caption = prompt
-  2. bot gửi tin "✅ Đã nhận 1 bức ảnh kèm kịch bản" + nút: Dọc 9:16 | Ngang 16:9 / 6s | 10s | 15s /
-     ⚡ 720p | ✨ 1080p Full HD / 🎬 Tạo Video (từ ảnh + prompt). Nút đang chọn có "✓"; bấm → bot sửa tin đó.
+  2. bot gửi tin "✅ Đã nhận 1 bức ảnh kèm kịch bản" + nút: Dọc 9:16 | Ngang 16:9 / 3s | 5s | 6s | 7s /
+     8s | 10s | 12s | 15s / ⚡ 720p | ✨ 1080p Full HD / 🎬 Tạo Video (từ ảnh + prompt) (thời lượng 2 hàng từ
+     21/11, trước đó chỉ 6s | 10s | 15s). Nút đang chọn có "✓"; bấm → bot sửa tin đó.
   3. bấm Tạo Video → tin tuỳ chọn bị xoá, bot gửi "⏳ Đã nhận yêu cầu Tạo Video [...]"
   4. "🎬 Đang tạo video (9:16 | 1080p): 30%" được sửa tới 99% rồi xoá
   5. bot gửi video (không reply, không caption) rồi "✅ Nhiệm vụ đã hoàn thành..."

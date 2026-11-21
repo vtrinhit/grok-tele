@@ -34,7 +34,8 @@ ASPECT_MAP = {
     "1:1": "9:16", "2:3": "9:16", "3:4": "9:16", "4:5": "9:16",
     "3:2": "16:9", "4:3": "16:9", "21:9": "16:9",
 }
-VALID_DURATIONS = (6, 10, 15)
+# Nút thời lượng của bot (21/11): 3s 5s 6s 7s / 8s 10s 12s 15s.
+VALID_DURATIONS = (3, 5, 6, 7, 8, 10, 12, 15)
 # Bot chỉ có 720p và 1080p; 480p (mặc định MultiKit) được nâng lên 720p.
 RESOLUTION_MAP = {"480p": "720p", "720p": "720p", "1080p": "1080p"}
 

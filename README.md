@@ -87,7 +87,7 @@ Tự chạy khi bật máy: nháy đúp `07.install-autostart.bat`.
 ReelFB → Settings → Video → provider **MultiKit**:
 - URL: `http://127.0.0.1:8888`
 - API key: gõ bất kỳ (GrokTele không kiểm tra key trừ khi đặt `GROKTELE_API_KEY` trong `.env`)
-- Tỷ lệ: chỉ `9:16` hoặc `16:9`. Thời lượng: 6 / 10 / 15. Chất lượng: `720p` hoặc `1080p` (`480p` tự nâng lên 720p).
+- Tỷ lệ: chỉ `9:16` hoặc `16:9`. Thời lượng (giây): 3 / 5 / 6 / 7 / 8 / 10 / 12 / 15. Chất lượng: `720p` hoặc `1080p` (`480p` tự nâng lên 720p).
 - Bot giữ tỷ lệ theo ảnh gốc: ảnh vuông cho video vuông dù chọn 9:16. Muốn video dọc thì dùng ảnh dọc.
 - Lô lớn: ReelFB chờ mỗi clip tối đa "Timeout mỗi clip" (`video_multikit_timeout`), tính cả thời gian xếp hàng.
   Đặt **7200** trong ReelFB Settings. Số record song song bước 3 nên khoảng 2 × số tài khoản Telegram

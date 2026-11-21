@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from groktele import __version__
-from groktele.config import AccountConfig, Settings, load_settings, parse_proxy, save_account
+from groktele.config import VALID_DURATIONS, AccountConfig, Settings, load_settings, parse_proxy, save_account
 
 
 def _need_api(settings: Settings) -> None:
@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("image")
     p.add_argument("prompt")
     p.add_argument("--aspect", default="9:16", choices=["9:16", "16:9"])
-    p.add_argument("--duration", type=int, default=10, choices=[6, 10, 15])
+    p.add_argument("--duration", type=int, default=10, choices=list(VALID_DURATIONS))
     p.add_argument("--resolution", default="720p", choices=["480p", "720p", "1080p"])
     p.add_argument("--out")
 
