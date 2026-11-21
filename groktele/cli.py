@@ -8,7 +8,16 @@ import time
 from pathlib import Path
 
 from groktele import __version__
-from groktele.config import VALID_DURATIONS, AccountConfig, Settings, load_settings, parse_proxy, save_account
+from groktele.config import (
+    MAX_IMAGES,
+    MULTI_IMAGE_MODES,
+    VALID_DURATIONS,
+    AccountConfig,
+    Settings,
+    load_settings,
+    parse_proxy,
+    save_account,
+)
 
 
 def _need_api(settings: Settings) -> None:
@@ -129,7 +138,8 @@ def _set_account(settings: Settings, name: str, status: str) -> None:
 
 
 async def _try(settings: Settings, name: str, image: str, prompt: str, aspect: str, duration: int,
-               resolution: str, out: str | None) -> None:
+               resolution: str, out: str | None, extra: list[str] | None = None,
+               image_mode: str = "reference") -> None:
     from groktele.bot_driver import JobParams, check_status, human_delay, run_job
     from groktele.chat import TelethonChat
     from groktele.config import RESOLUTION_MAP
@@ -164,7 +174,9 @@ async def _try(settings: Settings, name: str, image: str, prompt: str, aspect: s
         result = await run_job(
             chat,
             JobParams(image_path=str(Path(image).resolve()), prompt=prompt, aspect=aspect, duration=duration,
-                      resolution=RESOLUTION_MAP.get(resolution, resolution), output_path=str(out_path.resolve())),
+                      resolution=RESOLUTION_MAP.get(resolution, resolution), output_path=str(out_path.resolve()),
+                      image_paths=[str(Path(x).resolve()) for x in [image, *extra]] if extra else [],
+                      image_mode=image_mode),
             ui_timeout=settings.ui_timeout, video_timeout=settings.video_timeout, on_stage=on_stage,
             delay=lambda: human_delay(*settings.action_delay),
         )
@@ -213,6 +225,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--aspect", default="9:16", choices=["9:16", "16:9"])
     p.add_argument("--duration", type=int, default=10, choices=list(VALID_DURATIONS))
     p.add_argument("--resolution", default="720p", choices=["480p", "720p", "1080p"])
+    p.add_argument("--extra", nargs="+", default=[], metavar="IMAGE",
+                   help=f"ảnh thêm cho video nhiều ảnh (tổng tối đa {MAX_IMAGES}; nhiều ảnh luôn 720p)")
+    p.add_argument("--image-mode", default="reference", choices=list(MULTI_IMAGE_MODES),
+                   help="2 ảnh: reference = Ghép Nguyên Liệu, firstLast = Ảnh Đầu → Ảnh Cuối")
     p.add_argument("--out")
 
     args = parser.parse_args(argv)
@@ -237,5 +253,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "cancel-all":
         _cancel_all(settings)
     elif args.cmd == "try":
+        if len(args.extra) + 1 > MAX_IMAGES:
+            parser.error(f"tối đa {MAX_IMAGES} ảnh")
         asyncio.run(_try(settings, args.name, args.image, args.prompt, args.aspect, args.duration,
-                         args.resolution, args.out))
+                         args.resolution, args.out, args.extra, args.image_mode))

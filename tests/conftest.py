@@ -32,6 +32,18 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
+def images(tmp_path: Path) -> list[Path]:
+    """7 ảnh khác nhau (bot nhận tối đa 6) cho video nhiều ảnh."""
+    out = []
+    for i in range(7):
+        p = tmp_path / "in" / f"shot_{i + 1}.png"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes([i]) * 1000)
+        out.append(p)
+    return out
+
+
+@pytest.fixture
 def image(tmp_path: Path) -> Path:
     p = tmp_path / "in" / "flower.png"
     p.parent.mkdir(parents=True, exist_ok=True)

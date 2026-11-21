@@ -27,7 +27,7 @@ from groktele import disk
 from groktele.chat import AuthRequired, BotChat
 from groktele.config import AccountConfig, Settings
 from groktele.disk import is_disk_full
-from groktele.db import DB, USABLE_STATUSES, now_iso, parse_iso
+from groktele.db import DB, USABLE_STATUSES, job_images, now_iso, parse_iso
 
 log = logging.getLogger("groktele.worker")
 
@@ -324,9 +324,11 @@ class AccountWorker:
         assert self.chat is not None
         job_id = job["id"]
         log.info("[%s] %s bắt đầu (lượt %d): %s", self.name, job_id, job["attempts"], job["prompt"][:60])
+        images = job_images(job)
         params = JobParams(
             image_path=job["image_path"], prompt=job["prompt"], aspect=job["aspect"],
             duration=int(job["duration"]), resolution=job["resolution"], output_path=job["output_path"],
+            image_paths=images if len(images) > 1 else [], image_mode=job.get("image_mode") or "reference",
         )
 
         def on_stage(stage: str, progress: float) -> None:

@@ -34,6 +34,7 @@ class ChatEvent:
 class BotChat(Protocol):
     async def last_message_id(self) -> int: ...
     async def send_photo(self, path: str, caption: str) -> int: ...
+    async def send_photos(self, paths: list[str], caption: str) -> int: ...
     async def send_text(self, text: str) -> int: ...
     async def next_event(self, timeout: float) -> ChatEvent: ...
     def drain_events(self) -> None: ...
@@ -57,11 +58,12 @@ class TelegramStall(ConnectionError):
 IO_TIMEOUT = {"read": 30.0, "send": 30.0, "upload": 180.0, "download": 600.0, "connect": 60.0}
 
 
-async def _io(awaitable: Any, kind: str, what: str) -> Any:
+async def _io(awaitable: Any, kind: str, what: str, scale: float = 1.0) -> Any:
+    timeout = IO_TIMEOUT[kind] * scale
     try:
-        return await asyncio.wait_for(awaitable, timeout=IO_TIMEOUT[kind])
+        return await asyncio.wait_for(awaitable, timeout=timeout)
     except asyncio.TimeoutError as exc:
-        raise TelegramStall(f"Telegram không phản hồi sau {int(IO_TIMEOUT[kind])}s khi {what}") from exc
+        raise TelegramStall(f"Telegram không phản hồi sau {int(timeout)}s khi {what}") from exc
 
 
 def _to_bot_message(m: Any) -> BotMessage:
@@ -154,6 +156,13 @@ class TelethonChat:
         m = await _io(self.client.send_file(self.bot, path, caption=caption, force_document=False),
                       "upload", "gửi ảnh")
         return int(m.id)
+
+    async def send_photos(self, paths: list[str], caption: str) -> int:
+        """Gửi album (1 tin nhóm nhiều ảnh), caption nằm ở ảnh đầu. Trả về id tin cuối của album."""
+        msgs = await _io(self.client.send_file(self.bot, list(paths), caption=caption, force_document=False),
+                         "upload", f"gửi album {len(paths)} ảnh", scale=max(1, len(paths)))
+        ids = [int(m.id) for m in (msgs if isinstance(msgs, list) else [msgs])]
+        return max(ids)
 
     async def send_text(self, text: str) -> int:
         m = await _io(self.client.send_message(self.bot, text), "send", "gửi tin nhắn")

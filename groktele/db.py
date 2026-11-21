@@ -1,6 +1,7 @@
 """SQLite cho job và trạng thái tài khoản. Mọi hàm đồng bộ, rất nhanh, gọi thẳng từ event loop."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -63,8 +64,16 @@ CREATE TABLE IF NOT EXISTS accounts (
 _MIGRATIONS = {
     "accounts": {"orphan_job": "TEXT", "orphan_baseline": "INTEGER", "orphan_since": "REAL",
                  "orphan_cancel_at": "REAL"},
-    "jobs": {"last_polled_at": "REAL"},
+    # image_paths: JSON danh sách ảnh của video nhiều ảnh (NULL = job 1 ảnh, chỉ dùng image_path).
+    "jobs": {"last_polled_at": "REAL", "image_paths": "TEXT", "image_mode": "TEXT"},
 }
+
+
+def job_images(job: dict) -> list[str]:
+    """Mọi ảnh của job theo thứ tự gửi bot (job 1 ảnh → [image_path])."""
+    raw = job.get("image_paths")
+    paths = json.loads(raw) if raw else None
+    return list(paths) if paths else [job["image_path"]]
 
 
 def now_iso() -> str:
@@ -122,14 +131,17 @@ class DB:
     def create_job(self, *, image_path: str, prompt: str, aspect: str, duration: int, resolution: str,
                    output_path: str, priority: int = 0, client_ref: Optional[str] = None,
                    pinned_account: Optional[str] = None, batch_id: Optional[str] = None,
-                   job_id: Optional[str] = None) -> dict:
+                   job_id: Optional[str] = None, image_paths: Optional[list[str]] = None,
+                   image_mode: Optional[str] = None) -> dict:
         job_id = job_id or new_id("job")
+        multi = json.dumps(image_paths, ensure_ascii=False) if image_paths and len(image_paths) > 1 else None
         self._exec(
             """INSERT INTO jobs (id, batch_id, client_ref, status, priority, image_path, prompt, aspect,
-                                 duration, resolution, output_path, pinned_account, created_at)
-               VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 duration, resolution, output_path, pinned_account, created_at,
+                                 image_paths, image_mode)
+               VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (job_id, batch_id, client_ref, int(priority), image_path, prompt, aspect, int(duration),
-             resolution, output_path, pinned_account, now_iso()),
+             resolution, output_path, pinned_account, now_iso(), multi, image_mode if multi else None),
         )
         return self.get_job(job_id)  # type: ignore[return-value]
 

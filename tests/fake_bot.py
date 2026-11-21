@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Callable, Optional
 
 from groktele.chat import BotMessage, ChatEvent
 
-ACCEPTED = ("⏳ Đã nhận yêu cầu Tạo Video [1 Ảnh | Tỷ lệ {aspect} | {duration}s | {res}]. Bot sẽ gửi video tại đây "
+ACCEPTED = ("⏳ Đã nhận yêu cầu Tạo Video [{n} Ảnh | Tỷ lệ {aspect} | {duration}s | {res}]. Bot sẽ gửi video tại đây "
             "ngay khi hoàn tất!\n\n🤖 Bot là AI nên có thể mắc sai sót.\n🔄 Nếu quá trình tạo video báo lỗi, bạn "
             "hãy gửi lại ảnh và prompt để tạo lại nhé.")
 OPTIONS = ("✅ Đã nhận 1 bức ảnh kèm kịch bản.\n📐 Tỷ lệ: {aspect} | ⏱ Thời lượng: {duration}s | 🎞 Chất lượng: {res}\n"
@@ -31,6 +32,27 @@ POLICY = ("⚠️ Nội dung yêu cầu vi phạm chính sách của Grok nên k
 CANCELLED = "✅ Đã làm mới trạng thái! Bạn hãy gửi ảnh và kịch bản mới nhé. 🎬"
 # Bàn phím thật (21/11): thời lượng chia 2 hàng giữa hàng tỷ lệ và hàng chất lượng.
 DURATION_ROWS = (("3", "5", "6", "7"), ("8", "10", "12", "15"))
+START_1 = "🎬 Tạo Video (từ ảnh + prompt)"
+# Video nhiều ảnh (thăm dò thật 21/11): không có hàng chất lượng, nút bắt đầu theo số ảnh, tối đa 6 ảnh.
+PAIR_FIRST_LAST = "🎯 Chuyển cảnh: Ảnh Đầu → Ảnh Cuối"
+PAIR_REFERENCE = "🎞️ Ghép Nguyên Liệu (2 ảnh tham chiếu)"
+START_3 = "🎞️ Tạo Video từ 3 ảnh (Nguyên liệu / Xoay 2 mặt)"
+MAX_IMAGES = 6
+OPTIONS_MULTI = ("✅ Đã nhận {n} bức ảnh kèm kịch bản.\n📐 Tỷ lệ: {aspect} | ⏱️ Thời lượng: {duration}s | "
+                 "🎞️ Chất lượng: 720p\n👇 Hãy bấm nút bên dưới để bắt đầu tạo video:")
+ALBUM_NO_CAPTION = ("📥 Đã nhận {n} bức ảnh!\n👉 Bạn có thể gửi thêm ảnh (2–3 ảnh: Ghép tham chiếu/Xoay 2 mặt | "
+                    "4–6 ảnh: Nguyên liệu + Ảnh cuối làm Last Frame) hoặc nhắn kịch bản (Prompt) vào khung chat để "
+                    "tạo video nhé!")
+
+
+def start_labels(n: int) -> list[str]:
+    if n <= 1:
+        return [START_1]
+    if n == 2:
+        return [PAIR_FIRST_LAST, PAIR_REFERENCE]
+    if n == 3:
+        return [START_3]
+    return [f"🎬 Tạo Video {n} ảnh ({n - 1} Nguyên liệu + Ảnh {n} Last Frame)"]
 
 
 # Popup thật (28/10) khi bấm Tạo Video lúc bot sắp khởi động lại.
@@ -51,6 +73,7 @@ class Scenario:
     video_bytes: int = 20_000
     step: float = 0.01           # độ trễ giữa các tin của bot
     cancel_kills: bool = True    # /cancel có dừng render đang chạy không
+    received: Optional[int] = None  # album: bot chỉ nhận ngần này ảnh (mô phỏng album thiếu ảnh)
     start_answer: str = ""       # popup khi bấm Tạo Video; RESTARTING = bot từ chối, không render
 
 
@@ -64,6 +87,9 @@ class FakeChat:
         self.messages: dict[int, BotMessage] = {}
         self.queue: asyncio.Queue[ChatEvent] = asyncio.Queue()
         self.photos: list[tuple[str, str]] = []
+        self.albums: list[tuple[list[str], str]] = []
+        self.n_images = 1
+        self.started_with: Optional[str] = None  # nhãn nút bắt đầu đã bấm
         self.texts: list[str] = []
         self.clicks: list[str] = []
         self.closed = False
@@ -98,14 +124,18 @@ class FakeChat:
             return f"✓ {label}" if on else label
 
         s = self.sel
-        return [
+        rows = [
             [mark("📐 Dọc 9:16", s["aspect"] == "9:16"), mark("📐 Ngang 16:9", s["aspect"] == "16:9")],
             *[[mark(f"{d}s", s["duration"] == d) for d in row] for row in DURATION_ROWS],
-            [mark("⚡ 720p", s["res"] == "720p"), mark("✨ 1080p Full HD", s["res"] == "1080p")],
-            ["🎬 Tạo Video (từ ảnh + prompt)"],
         ]
+        if self.n_images == 1:
+            rows.append([mark("⚡ 720p", s["res"] == "720p"), mark("✨ 1080p Full HD", s["res"] == "1080p")])
+        rows += [[label] for label in start_labels(self.n_images)]
+        return rows
 
     def _options_text(self) -> str:
+        if self.n_images > 1:
+            return OPTIONS_MULTI.format(n=self.n_images, aspect=self.sel["aspect"], duration=self.sel["duration"])
         return OPTIONS.format(aspect=self.sel["aspect"], duration=self.sel["duration"], res=self.sel["res"])
 
     def _later(self, coro_fn: Callable[[], object]) -> None:
@@ -120,12 +150,37 @@ class FakeChat:
         if len(caption) > 1024:
             raise CaptionTooLong("The caption is too long (caused by SendMediaRequest)")
         self.photos.append((path, caption))
+        self.n_images = 1
         self._prompt = caption
         my_id = self._id()
         sc = self.scenarios.pop(0) if self.scenarios else self.default
         self._current = sc
         if not caption:
             self._awaiting_prompt = True  # bot chờ tin nhắn kịch bản
+            return my_id
+        self._reply_photo(sc)
+        return my_id
+
+    async def send_photos(self, paths: list[str], caption: str) -> int:
+        for path in paths:
+            assert Path(path).exists(), path
+        if len(caption) > 1024:
+            raise CaptionTooLong("The caption is too long (caused by SendMultiMediaRequest)")
+        self.albums.append((list(paths), caption))
+        self._prompt = caption
+        self.next_id += len(paths)  # album = nhiều tin
+        my_id = self.next_id
+        sc = self.scenarios.pop(0) if self.scenarios else self.default
+        self._current = sc
+        self.n_images = sc.received if sc.received is not None else min(len(paths), MAX_IMAGES)
+        if not caption:
+            self._awaiting_prompt = True
+
+            async def got() -> None:
+                await asyncio.sleep(sc.step)
+                self.bot_says(ALBUM_NO_CAPTION.format(n=self.n_images))
+
+            self._later(got)
             return my_id
         self._reply_photo(sc)
         return my_id
@@ -166,6 +221,8 @@ class FakeChat:
         if getattr(self, "_awaiting_prompt", False) and not text.startswith("/"):
             assert len(text) <= 4096
             self._awaiting_prompt = False
+            # Album không caption: prompt phải tới sau khi bot báo "📥 Đã nhận N bức ảnh!".
+            self.prompt_after_ack = any("bức ảnh!" in (m.text or "") for m in self.messages.values())
             self._prompt = text
             self._reply_photo(self._current or self.default)
             return my_id
@@ -199,9 +256,10 @@ class FakeChat:
         label = m.buttons[row][col]
         self.clicks.append(label)
         sc = self._current or self.default
-        if "Tạo Video" in label:
+        if label in start_labels(self.n_images):
             if sc.start_answer in (RESTARTING, BUSY):
                 return sc.start_answer  # bảng tuỳ chọn giữ nguyên, không render
+            self.started_with = label
             del self.messages[msg_id]
             self._render_task = asyncio.ensure_future(self._render(sc))
             self._render_sc = sc
@@ -209,20 +267,24 @@ class FakeChat:
             return sc.start_answer or "Đã nhận yêu cầu tạo Video!"
         if sc.ignore_clicks:
             return None
-        if row == 0:
-            self.sel["aspect"] = "9:16" if col == 0 else "16:9"
-        elif 1 <= row <= len(DURATION_ROWS):
-            self.sel["duration"] = DURATION_ROWS[row - 1][col]
-        elif row == len(DURATION_ROWS) + 1:
-            self.sel["res"] = "720p" if col == 0 else "1080p"
+        base = label.replace("✓", "").strip()
+        if "9:16" in base or "16:9" in base:
+            self.sel["aspect"] = "9:16" if "9:16" in base else "16:9"
+        elif re.fullmatch(r"\d+s", base):
+            self.sel["duration"] = base[:-1]
+        elif "720p" in base or "1080p" in base:
+            self.sel["res"] = "720p" if "720p" in base else "1080p"
         self._edit(BotMessage(id=msg_id, text=self._options_text(), buttons=self._keyboard()))
         return None
 
     async def _render(self, sc: Scenario) -> None:
         s = dict(self.sel)
+        n = self.n_images
+        if n > 1:
+            s["res"] = "720p"
         prompt = self._prompt  # video mang đúng prompt của lần render này, kể cả khi về muộn
         await asyncio.sleep(sc.step)
-        self.bot_says(ACCEPTED.format(aspect=s["aspect"], duration=s["duration"], res=s["res"]))
+        self.bot_says(ACCEPTED.format(n=n, aspect=s["aspect"], duration=s["duration"], res=s["res"]))
         if sc.render == "silent":
             return
         if sc.render == "maintenance":

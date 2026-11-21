@@ -8,6 +8,13 @@ Luồng (quan sát thật 2026-10-22):
   3. bấm Tạo Video → tin tuỳ chọn bị xoá, bot gửi "⏳ Đã nhận yêu cầu Tạo Video [...]"
   4. "🎬 Đang tạo video (9:16 | 1080p): 30%" được sửa tới 99% rồi xoá
   5. bot gửi video (không reply, không caption) rồi "✅ Nhiệm vụ đã hoàn thành..."
+
+Nhiều ảnh (thăm dò 21/11, gửi album, caption ở ảnh đầu): "✅ Đã nhận N bức ảnh kèm kịch bản", KHÔNG có hàng
+720p/1080p (luôn 720p), nút bắt đầu đổi theo số ảnh:
+  2 ảnh: "🎯 Chuyển cảnh: Ảnh Đầu → Ảnh Cuối" | "🎞️ Ghép Nguyên Liệu (2 ảnh tham chiếu)" (2 nút riêng)
+  3 ảnh: "🎞️ Tạo Video từ 3 ảnh (Nguyên liệu / Xoay 2 mặt)"
+  4–6 ảnh: "🎬 Tạo Video N ảnh (N-1 Nguyên liệu + Ảnh N Last Frame)"; quá 6 ảnh bot lặng lẽ chỉ lấy 6.
+Album không caption: bot trả "📥 Đã nhận N bức ảnh! ... nhắn kịch bản" (không nút) rồi mới hiện bảng tuỳ chọn.
 """
 from __future__ import annotations
 
@@ -16,7 +23,7 @@ import logging
 import random
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
@@ -93,6 +100,13 @@ def is_selected(button_text: str) -> bool:
 
 
 _PROGRESS_RE = re.compile(r"đang tạo video.*?(\d{1,3})\s*%")
+_RECEIVED_RE = re.compile(r"đã nhận (\d+) bức ảnh")
+
+
+def received_count(text: str) -> Optional[int]:
+    """Số ảnh bot báo đã nhận ("Đã nhận 3 bức ảnh kèm kịch bản", "📥 Đã nhận 2 bức ảnh!"), None nếu không phải."""
+    m = _RECEIVED_RE.search(norm(text))
+    return int(m.group(1)) if m else None
 
 # Thứ tự kiểm tra quan trọng: "hoạt động trở lại" chứa "bảo trì" nên phải xét trước.
 _BACK_ONLINE = ("hoạt động trở lại", "hết bảo trì", "bảo trì xong", "đã bảo trì xong")
@@ -121,7 +135,7 @@ def classify(text: str) -> Optional[str]:
         return "back_online"
     if "đã nhận yêu cầu" in t:
         return "accepted"  # tin này có chữ "báo lỗi" trong lời dặn, phải xét trước "error"
-    if "đã nhận 1 bức ảnh" in t or "bấm tạo video" in t:
+    if _RECEIVED_RE.search(t) or "bấm tạo video" in t:
         return "options"
     if _PROGRESS_RE.search(t):
         return "progress"
@@ -182,7 +196,32 @@ def _match(kind: str, value: str, text: str) -> bool:
         return value.lower() in t
     if kind == "start":
         return "tạo video" in t and ("từ ảnh" in t or "prompt" in t)
+    if kind == "start_multi":  # "Tạo Video từ 3 ảnh (...)", "Tạo Video 4 ảnh (3 Nguyên liệu + Ảnh 4 Last Frame)"
+        return re.search(rf"tạo video (?:từ )?{int(value)} ảnh", t) is not None
+    if kind == "pair":  # 2 ảnh: mỗi kiểu ghép là 1 nút bắt đầu riêng
+        if value == "firstLast":
+            return "ảnh đầu" in t and "ảnh cuối" in t
+        return "ghép nguyên liệu" in t
     raise ValueError(kind)
+
+
+def _start_button(msg: BotMessage, p: "JobParams") -> Optional[tuple[int, int, str]]:
+    n = len(p.images)
+    if n == 1:
+        return find_button(msg, "start")
+    if n == 2:
+        return find_button(msg, "pair", p.image_mode)
+    return find_button(msg, "start_multi", str(n))
+
+
+def _any_start(msg: BotMessage) -> bool:
+    """Bảng tuỳ chọn đã gắn nút bắt đầu (kiểu nào cũng được) — dùng để chờ bảng khi gửi nhiều ảnh."""
+    for row in msg.buttons:
+        for label in row:
+            t = norm(label)
+            if "tạo video" in t or "ghép nguyên liệu" in t or ("ảnh đầu" in t and "ảnh cuối" in t):
+                return True
+    return False
 
 
 def find_button(msg: BotMessage, kind: str, value: str = "") -> Optional[tuple[int, int, str]]:
@@ -202,6 +241,13 @@ class JobParams:
     duration: int = 10
     resolution: str = "720p"
     output_path: str = ""
+    # Video nhiều ảnh: đủ 2–6 ảnh theo thứ tự (image_path = ảnh đầu). Rỗng = job 1 ảnh.
+    image_paths: list[str] = field(default_factory=list)
+    image_mode: str = "reference"  # chỉ dùng khi 2 ảnh: reference (Ghép Nguyên Liệu) | firstLast (Đầu → Cuối)
+
+    @property
+    def images(self) -> list[str]:
+        return self.image_paths if len(self.image_paths) > 1 else [self.image_path]
 
 
 @dataclass
@@ -340,26 +386,48 @@ async def run_job(chat: BotChat, p: JobParams, *, ui_timeout: float = 60.0, vide
     baseline = await chat.last_message_id()
     waiter = _Waiter(chat, baseline, state)
 
+    images = p.images
+    multi = len(images) > 1
     stage("upload", 0.0)
-    if len(p.prompt) <= CAPTION_LIMIT:
-        await chat.send_photo(p.image_path, p.prompt)
+    if not multi:
+        if len(p.prompt) <= CAPTION_LIMIT:
+            await chat.send_photo(p.image_path, p.prompt)
+        else:
+            # Caption ảnh tối đa 1024 ký tự. Bot cũng nhận kiểu "gửi ảnh, rồi nhắn kịch bản" (đúng hướng dẫn của bot).
+            await chat.send_photo(p.image_path, "")
+            await delay()
+            await chat.send_text(p.prompt[:TEXT_LIMIT])
+    elif len(p.prompt) <= CAPTION_LIMIT:
+        await chat.send_photos(images, p.prompt)
     else:
-        # Caption ảnh tối đa 1024 ký tự. Bot cũng nhận kiểu "gửi ảnh, rồi nhắn kịch bản" (đúng hướng dẫn của bot).
-        await chat.send_photo(p.image_path, "")
+        await chat.send_photos(images, "")
+        # Chờ bot gom đủ album ("📥 Đã nhận N bức ảnh!") rồi mới nhắn kịch bản, kẻo prompt chỉ gắn với một phần album.
+        await waiter.wait(lambda m, c: received_count(m.text) == len(images), ui_timeout,
+                          f"bot nhận đủ {len(images)} ảnh")
         await delay()
         await chat.send_text(p.prompt[:TEXT_LIMIT])
 
-    # Bot gửi chữ "Đã nhận 1 bức ảnh..." trước rồi mới sửa tin để gắn nút → chờ tới khi có nút Tạo Video.
-    options = await waiter.wait(lambda m, c: find_button(m, "start") is not None, ui_timeout, "bảng tuỳ chọn")
+    if not multi:
+        # Bot gửi chữ "Đã nhận 1 bức ảnh..." trước rồi mới sửa tin để gắn nút → chờ tới khi có nút Tạo Video.
+        options = await waiter.wait(lambda m, c: find_button(m, "start") is not None, ui_timeout, "bảng tuỳ chọn")
+    else:
+        options = await waiter.wait(lambda m, c: _any_start(m), ui_timeout, "bảng tuỳ chọn")
+        got = received_count(options.text)
+        if got is not None and got != len(images):
+            raise RetryableError(f"Bot chỉ nhận {got}/{len(images)} ảnh của album")
     stage("options", 0.05)
     await _ensure_option(chat, options.id, "aspect", p.aspect, delay)
     await _ensure_option(chat, options.id, "duration", str(p.duration), delay)
-    await _ensure_option(chat, options.id, "resolution", p.resolution, delay)
+    if not multi:  # nhiều ảnh: bot không có nút chất lượng (luôn 720p)
+        await _ensure_option(chat, options.id, "resolution", p.resolution, delay)
 
     current = await chat.get_message(options.id)
-    start = find_button(current, "start") if current else None
+    start = _start_button(current, p) if current else None
     if not start:
-        raise RetryableError("Không thấy nút Tạo Video")
+        raise RetryableError("Không thấy nút Tạo Video" if not multi else
+                             f"Không thấy nút bắt đầu cho {len(images)} ảnh "
+                             f"({p.image_mode if len(images) == 2 else 'mặc định'}): "
+                             f"{current.buttons if current else None}")
     await delay()
     # Từ đây bot có thể đang render: nếu job dừng giữa chừng, video sẽ về muộn.
     state.render_baseline = baseline

@@ -121,6 +121,27 @@ Log: `data\groktele.log`. Dữ liệu job: `data\groktele.db`.
 
 `POST` trả `409 no_account_available` khi không tài khoản nào chạy được (chưa login, tất cả hết hạn / tạm dừng / session chết).
 
+### Video nhiều ảnh (2–6 ảnh)
+
+Thay `imagePath`/`imageBase64` bằng **một** trong hai trường (theo đúng thứ tự ảnh):
+
+- `imagePaths`: danh sách đường dẫn tuyệt đối, hoặc
+- `imagesBase64`: danh sách base64 (nhận cả dạng `data:image/...;base64,`).
+
+```json
+{ "imagePaths": ["D:\\a\\1.png", "D:\\a\\2.png"], "prompt": "...", "duration": 8, "multiImageMode": "firstLast" }
+```
+
+- Tối đa **6 ảnh** (bot tự bỏ ảnh thứ 7 trở đi mà không báo, nên GrokTele trả lỗi 400).
+- Bot không cho chọn chất lượng khi gửi nhiều ảnh: video luôn **720p** (`resolution` gửi lên bị bỏ qua).
+- **2 ảnh:** `multiImageMode` = `reference` (mặc định, "Ghép Nguyên Liệu": trộn nhân vật/trang phục/bối cảnh)
+  hoặc `firstLast` ("Chuyển cảnh": ảnh 1 là khung đầu, ảnh 2 là khung cuối).
+- **3 ảnh:** bot ghép nguyên liệu (hoặc xoay 2 mặt).
+- **4–6 ảnh:** ảnh 1 → N-1 làm nguyên liệu, **ảnh cuối làm khung hình cuối**.
+- Danh sách chỉ có 1 ảnh = job 1 ảnh bình thường (chọn được 1080p).
+- Kết quả job có thêm `input.imagePaths` và `input.multiImageMode`. ReelFB gửi `imagePath` như cũ, không đổi gì.
+- Chạy thử: `python -m groktele try acc1 1.png "prompt" --extra 2.png 3.png [--image-mode firstLast]`.
+
 ## Tự xử lý lỗi
 
 | Tình huống | GrokTele làm gì |

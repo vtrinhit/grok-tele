@@ -17,10 +17,18 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from groktele import __version__
-from groktele.config import ASPECT_MAP, RESOLUTION_MAP, VALID_DURATIONS, Settings
+from groktele.config import (
+    ASPECT_MAP,
+    MAX_IMAGES,
+    MULTI_IMAGE_MODES,
+    MULTI_IMAGE_RESOLUTION,
+    RESOLUTION_MAP,
+    VALID_DURATIONS,
+    Settings,
+)
 from groktele import disk
 from groktele.bot_driver import hours_left
-from groktele.db import DB, TERMINAL, new_id
+from groktele.db import DB, TERMINAL, job_images, new_id
 from groktele.worker import Manager
 
 log = logging.getLogger("groktele.api")
@@ -91,6 +99,8 @@ def job_to_api(job: dict) -> dict:
         "priority": job["priority"],
         "input": {
             "imagePath": job["image_path"],
+            "imagePaths": job_images(job),
+            "multiImageMode": job.get("image_mode"),
             "prompt": job["prompt"],
             "aspectRatio": job["aspect"],
             "duration": job["duration"],
@@ -130,6 +140,64 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:80] or "image.png"
 
 
+def _check_image_path(value: Any, field: str, index: Optional[int], label: str = "") -> str:
+    p = Path(str(value))
+    if not p.is_absolute():
+        raise _field_error(field, f"{label}phải là đường dẫn tuyệt đối", index)
+    if not p.is_file():
+        raise _field_error(field, f"{label}không tồn tại: {p}", index)
+    if p.suffix.lower() not in IMAGE_EXTS:
+        raise _field_error(field, f"{label}chỉ nhận jpg, png, webp", index)
+    if p.stat().st_size > MAX_IMAGE_BYTES:
+        raise _field_error(field, f"{label}ảnh tối đa 10 MB", index)
+    return str(p)
+
+
+def _decode_image_b64(value: Any, field: str, index: Optional[int], label: str = "") -> bytes:
+    if not isinstance(value, str):
+        raise _field_error(field, f"{label}phải là chuỗi base64", index)
+    raw = value.split(",", 1)[1] if value.startswith("data:") else value
+    try:
+        data = base64.b64decode(raw, validate=False)
+    except (binascii.Error, ValueError):
+        raise _field_error(field, f"{label}base64 không hợp lệ", index)
+    if not data:
+        raise _field_error(field, f"{label}rỗng", index)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise _field_error(field, f"{label}ảnh tối đa 10 MB", index)
+    return data
+
+
+def _image_ext(data: bytes) -> str:
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return ".png"
+
+
+def _validate_image_list(body: dict, index: Optional[int]) -> list[dict]:
+    """`imagePaths` hoặc `imagesBase64` → [{"path", "bytes", "name"}], 1–MAX_IMAGES ảnh, theo đúng thứ tự gửi."""
+    paths, b64s = body.get("imagePaths"), body.get("imagesBase64")
+    field = "imagePaths" if paths is not None else "imagesBase64"
+    if (paths is not None and b64s is not None) or body.get("imagePath") or body.get("imageBase64"):
+        raise _field_error(field, "chỉ dùng một trong imagePath, imageBase64, imagePaths, imagesBase64", index)
+    items = paths if paths is not None else b64s
+    if not isinstance(items, list) or not items:
+        raise _field_error(field, f"phải là danh sách 1–{MAX_IMAGES} ảnh", index)
+    if len(items) > MAX_IMAGES:
+        raise _field_error(field, f"tối đa {MAX_IMAGES} ảnh (bot bỏ bớt ảnh thừa mà không báo)", index)
+    out = []
+    for i, item in enumerate(items, 1):
+        label = f"ảnh {i}: "
+        if field == "imagePaths":
+            out.append({"path": _check_image_path(item, field, index, label), "bytes": None, "name": None})
+        else:
+            data = _decode_image_b64(item, field, index, label)
+            out.append({"path": None, "bytes": data, "name": f"image_{i}{_image_ext(data)}"})
+    return out
+
+
 def validate_job(body: Any, settings: Settings, index: Optional[int] = None) -> dict:
     """Body kiểu MultiKit → tham số job (chưa lưu ảnh base64)."""
     if not isinstance(body, dict):
@@ -143,38 +211,40 @@ def validate_job(body: Any, settings: Settings, index: Optional[int] = None) -> 
         log.warning("Prompt %d ký tự vượt %d → tự cắt bớt", len(prompt), MAX_PROMPT)
         prompt = clip_prompt(prompt)
 
+    images: Optional[list[dict]] = None  # video nhiều ảnh (2–6); None = job 1 ảnh như cũ
     image_path = body.get("imagePath")
     image_b64 = body.get("imageBase64")
-    if not image_path and not image_b64:
-        raise _field_error("imagePath", "cần imagePath hoặc imageBase64", index)
-    if image_path:
-        p = Path(str(image_path))
-        if not p.is_absolute():
-            raise _field_error("imagePath", "phải là đường dẫn tuyệt đối", index)
-        if not p.is_file():
-            raise _field_error("imagePath", f"không tồn tại: {p}", index)
-        if p.suffix.lower() not in IMAGE_EXTS:
-            raise _field_error("imagePath", "chỉ nhận jpg, png, webp", index)
-        if p.stat().st_size > MAX_IMAGE_BYTES:
-            raise _field_error("imagePath", "ảnh tối đa 10 MB", index)
-        image_path = str(p)
+    if body.get("imagePaths") is not None or body.get("imagesBase64") is not None:
+        images = _validate_image_list(body, index)
+        if len(images) == 1:  # danh sách 1 ảnh = job 1 ảnh bình thường (đúng luồng cũ)
+            image_path = images[0]["path"]
+            if images[0]["bytes"] is not None:
+                body = {**body, "_image_bytes": images[0]["bytes"], "_image_name": images[0]["name"]}
+            images = None
+        else:
+            image_path = None
+    elif not image_path and not image_b64:
+        raise _field_error("imagePath", "cần imagePath hoặc imageBase64 (nhiều ảnh: imagePaths / imagesBase64)",
+                           index)
+    elif image_path:
+        image_path = _check_image_path(image_path, "imagePath", index)
     else:
-        if not isinstance(image_b64, str):
-            raise _field_error("imageBase64", "phải là chuỗi base64", index)
-        raw = image_b64.split(",", 1)[1] if image_b64.startswith("data:") else image_b64
-        try:
-            data = base64.b64decode(raw, validate=False)
-        except (binascii.Error, ValueError):
-            raise _field_error("imageBase64", "base64 không hợp lệ", index)
-        if not data:
-            raise _field_error("imageBase64", "rỗng", index)
-        if len(data) > MAX_IMAGE_BYTES:
-            raise _field_error("imageBase64", "ảnh tối đa 10 MB", index)
+        data = _decode_image_b64(image_b64, "imageBase64", index)
         name = _safe_name(str(body.get("imageFileName") or "image.png"))
         if Path(name).suffix.lower() not in IMAGE_EXTS:
             name += ".png"
         image_path = None
         body = {**body, "_image_bytes": data, "_image_name": name}
+
+    image_mode = None
+    mode_in = body.get("multiImageMode")
+    if mode_in is not None and str(mode_in).strip():
+        modes = {m.lower(): m for m in MULTI_IMAGE_MODES}
+        image_mode = modes.get(str(mode_in).strip().lower())
+        if image_mode is None:
+            raise _field_error("multiImageMode", f"phải là {' hoặc '.join(MULTI_IMAGE_MODES)}", index)
+    # Bot chỉ hỏi kiểu ghép khi đúng 2 ảnh; 3–6 ảnh bot tự quyết (4–6 ảnh: ảnh cuối làm khung hình cuối).
+    image_mode = (image_mode or MULTI_IMAGE_MODES[0]) if images and len(images) == 2 else None
 
     aspect_in = str(body.get("aspectRatio") or settings.default_aspect).strip()
     aspect = ASPECT_MAP.get(aspect_in)
@@ -193,6 +263,11 @@ def validate_job(body: Any, settings: Settings, index: Optional[int] = None) -> 
     res_in = str(body.get("resolution") or settings.default_resolution).lower()
     if res_in not in RESOLUTION_MAP:
         raise _field_error("resolution", "phải là 480p, 720p hoặc 1080p", index)
+    resolution = RESOLUTION_MAP[res_in]
+    if images and resolution != MULTI_IMAGE_RESOLUTION:
+        # Bot không có nút chất lượng khi gửi nhiều ảnh (luôn 720p) — giống cách 480p được nâng lên 720p.
+        log.info("Video %d ảnh: bot chỉ làm %s, bỏ qua resolution=%s", len(images), MULTI_IMAGE_RESOLUTION, res_in)
+        resolution = MULTI_IMAGE_RESOLUTION
 
     output_path = body.get("outputPath")
     output_dir = body.get("outputDir")
@@ -217,9 +292,11 @@ def validate_job(body: Any, settings: Settings, index: Optional[int] = None) -> 
         "image_path": image_path,
         "image_bytes": body.get("_image_bytes"),
         "image_name": body.get("_image_name"),
+        "images": images,
+        "image_mode": image_mode,
         "aspect": aspect,
         "duration": duration,
-        "resolution": RESOLUTION_MAP[res_in],
+        "resolution": resolution,
         "output_path": str(output_path) if output_path else None,
         "output_dir": str(output_dir) if output_dir else None,
         "priority": priority,
@@ -289,7 +366,19 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
         """Lưu ảnh base64, quyết định output path."""
         job_id = new_id("job")
         image_path = v["image_path"]
-        if not image_path:
+        image_paths: Optional[list[str]] = None
+        if v["images"]:
+            image_paths = []
+            for img in v["images"]:
+                if img["path"]:
+                    image_paths.append(img["path"])
+                else:
+                    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+                    dest = settings.uploads_dir / f"{job_id}_{img['name']}"
+                    dest.write_bytes(img["bytes"])
+                    image_paths.append(str(dest))
+            image_path = image_paths[0]
+        elif not image_path:
             settings.uploads_dir.mkdir(parents=True, exist_ok=True)
             dest = settings.uploads_dir / f"{job_id}_{v['image_name']}"
             dest.write_bytes(v["image_bytes"])
@@ -300,7 +389,7 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
             folder = Path(v["output_dir"]) if v["output_dir"] else settings.outputs_dir
             stem = _safe_name(v["client_ref"]) if v["client_ref"] else job_id
             output = str(folder / f"{stem}.mp4")
-        return {"job_id": job_id, "image_path": image_path, "output_path": output}
+        return {"job_id": job_id, "image_path": image_path, "image_paths": image_paths, "output_path": output}
 
     def _normalize_account(v: dict) -> dict:
         # accountId lạ (vd tên tài khoản MultiKit còn lưu trong ReelFB) → bỏ ghim thay vì từ chối job.
@@ -319,8 +408,12 @@ def create_api(settings: Settings, db: DB, manager: Manager, lifespan: Any = Non
             job_id=m["job_id"], image_path=m["image_path"], prompt=v["prompt"], aspect=v["aspect"],
             duration=v["duration"], resolution=v["resolution"], output_path=m["output_path"],
             priority=v["priority"], client_ref=v["client_ref"], pinned_account=v["account"], batch_id=batch_id,
+            image_paths=m["image_paths"], image_mode=v["image_mode"],
         )
-        log.info("Nhận %s (%s %ss %s): %s", job["id"], v["aspect"], v["duration"], v["resolution"], v["prompt"][:60])
+        extra = f" {len(m['image_paths'])} ảnh" + (f" {v['image_mode']}" if v["image_mode"] else "") \
+            if m["image_paths"] else ""
+        log.info("Nhận %s (%s %ss %s%s): %s", job["id"], v["aspect"], v["duration"], v["resolution"], extra,
+                 v["prompt"][:60])
         return job, False
 
     def _output_dir(v: dict) -> Path:

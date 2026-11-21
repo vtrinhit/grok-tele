@@ -38,6 +38,11 @@ ASPECT_MAP = {
 VALID_DURATIONS = (3, 5, 6, 7, 8, 10, 12, 15)
 # Bot chỉ có 720p và 1080p; 480p (mặc định MultiKit) được nâng lên 720p.
 RESOLUTION_MAP = {"480p": "720p", "720p": "720p", "1080p": "1080p"}
+# Video nhiều ảnh (thăm dò 21/11): bot nhận tối đa 6 ảnh (gửi 7 thì lặng lẽ bỏ ảnh 7), không có nút chất lượng
+# (luôn 720p). Đúng 2 ảnh thì phải chọn kiểu ghép: "reference" = Ghép Nguyên Liệu, "firstLast" = Ảnh Đầu → Ảnh Cuối.
+MAX_IMAGES = 6
+MULTI_IMAGE_RESOLUTION = "720p"
+MULTI_IMAGE_MODES = ("reference", "firstLast")
 
 
 def load_dotenv(path: Path) -> None:
